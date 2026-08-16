@@ -161,6 +161,10 @@ class FileSession:
         return self._data.get("score")
 
     @property
+    def cleaning_outcome_state(self) -> str:
+        return self._data.get("cleaning_outcome_state", "fully_cleaned")
+
+    @property
     def inspect_report(self) -> dict[str, Any] | None:
         return self._data.get("inspect_report")
 
@@ -226,6 +230,25 @@ class FileSession:
             self._data["post_clean_inspect"] = post_inspect_res
             self._data["post_verification_status"] = post_inspect_res.get("verification_status")
             self._data["post_verified_clean"] = post_inspect_res.get("verified_clean", False)
+
+        # Determine cleaning outcome state (A, B, C, D)
+        clean_report = res.get("report") or {}
+        actions = clean_report.get("actions", [])
+        post_inspect = post_inspect_res or {}
+        post_findings = post_inspect.get("normalized_findings", [])
+        post_verif_status = post_inspect.get("verification_status", "not_detected")
+        post_missing = post_inspect.get("missing_tools", [])
+
+        if clean_report.get("mode") == "copy" or any("no PDF cleaner available" in a or "copied as-is" in a for a in actions):
+            outcome_state = "no_cleaning_performed"
+        elif post_verif_status == "detected" and len(post_findings) > 0:
+            outcome_state = "findings_remain"
+        elif post_verif_status == "inconclusive" or len(post_missing) > 0:
+            outcome_state = "cleaned_verification_incomplete"
+        else:
+            outcome_state = "fully_cleaned"
+
+        self._data["cleaning_outcome_state"] = outcome_state
 
         self._save()
         return cleaned_path

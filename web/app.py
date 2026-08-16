@@ -217,6 +217,7 @@ def download_report(session_id: str) -> Response:
         "verified_clean": session.verified_clean,
         "normalized_findings": session.normalized_findings,
         "score": session.score,
+        "cleaning_outcome_state": session.cleaning_outcome_state,
         "inspect_report": session.inspect_report,
         "clean_report": session.clean_report,
         "post_clean_inspect": session.post_clean_inspect,

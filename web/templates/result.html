@@ -80,13 +80,33 @@
 <div class="result-container">
 
   <!-- Top Identity & Status Section -->
-  <div class="forensic-panel" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; border-top: 4px solid var(--status-clean);">
+  <div class="forensic-panel" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem; border-top: 4px solid {% if session.cleaning_outcome_state == 'no_cleaning_performed' %}var(--status-warn){% elif session.cleaning_outcome_state == 'findings_remain' %}var(--status-danger){% else %}var(--status-clean){% endif %};">
     <div>
-      <div style="font-size: 0.75rem; color: var(--status-clean); text-transform: uppercase; font-weight: 700; letter-spacing: 0.1em;">Scrubbing Pipeline Executed</div>
-      <h1 style="font-family: var(--font-heading); font-size: 1.5rem; color: #fff; margin: 0.25rem 0 0.15rem;">File Cleaned Successfully</h1>
-      <div style="font-size: 0.85rem; color: var(--text-muted);">
-        File: <code>{{ session.original_filename }}</code> &bull; Size change: <strong>{{ session.size_delta }} B ({{ session.size_delta_pct }}%)</strong>
-      </div>
+      {% if session.cleaning_outcome_state == 'no_cleaning_performed' %}
+        <div style="font-size: 0.75rem; color: var(--status-warn); text-transform: uppercase; font-weight: 700; letter-spacing: 0.1em;">No Cleaning Performed</div>
+        <h1 style="font-family: var(--font-heading); font-size: 1.5rem; color: #fff; margin: 0.25rem 0 0.15rem;">No PDF cleaning performed — required PDF tools unavailable</h1>
+        <div style="font-size: 0.85rem; color: var(--text-muted);">
+          File: <code>{{ session.original_filename }}</code> &bull; Size change: <strong>{{ session.size_delta }} B ({{ session.size_delta_pct }}%)</strong>
+        </div>
+      {% elif session.cleaning_outcome_state == 'cleaned_verification_incomplete' %}
+        <div style="font-size: 0.75rem; color: var(--status-warn); text-transform: uppercase; font-weight: 700; letter-spacing: 0.1em;">Cleaning Completed with Limited Verification</div>
+        <h1 style="font-family: var(--font-heading); font-size: 1.5rem; color: #fff; margin: 0.25rem 0 0.15rem;">Cleaning completed with limited verification</h1>
+        <div style="font-size: 0.85rem; color: var(--text-muted);">
+          File: <code>{{ session.original_filename }}</code> &bull; Size change: <strong>{{ session.size_delta }} B ({{ session.size_delta_pct }}%)</strong>
+        </div>
+      {% elif session.cleaning_outcome_state == 'findings_remain' %}
+        <div style="font-size: 0.75rem; color: var(--status-danger); text-transform: uppercase; font-weight: 700; letter-spacing: 0.1em;">Scrubbing Incomplete</div>
+        <h1 style="font-family: var(--font-heading); font-size: 1.5rem; color: #fff; margin: 0.25rem 0 0.15rem;">Residue Signals Detected</h1>
+        <div style="font-size: 0.85rem; color: var(--text-muted);">
+          File: <code>{{ session.original_filename }}</code> &bull; Size change: <strong>{{ session.size_delta }} B ({{ session.size_delta_pct }}%)</strong>
+        </div>
+      {% else %}
+        <div style="font-size: 0.75rem; color: var(--status-clean); text-transform: uppercase; font-weight: 700; letter-spacing: 0.1em;">Scrubbing Pipeline Executed</div>
+        <h1 style="font-family: var(--font-heading); font-size: 1.5rem; color: #fff; margin: 0.25rem 0 0.15rem;">File Cleaned Successfully</h1>
+        <div style="font-size: 0.85rem; color: var(--text-muted);">
+          File: <code>{{ session.original_filename }}</code> &bull; Size change: <strong>{{ session.size_delta }} B ({{ session.size_delta_pct }}%)</strong>
+        </div>
+      {% endif %}
     </div>
     
     <div>
@@ -125,7 +145,7 @@
         <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
           <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase;">Exposure score</div>
           <div style="font-family: var(--font-heading); font-size: 1.5rem; font-weight: 800; color: #fff; margin-top: 0.15rem;">
-            {{ session.score.score|default('0.0') }}
+            {% if session.score and session.score.score is not none %}{{ session.score.score }}{% else %}N/A{% endif %}
           </div>
         </div>
         <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
@@ -146,6 +166,9 @@
         {% if not session.normalized_findings %}
           <div style="text-align: center; color: var(--text-dim); padding: 1rem 0;">No signals were found.</div>
         {% endif %}
+        {% if session.verification_status == 'inconclusive' %}
+          <div style="font-size: 0.8rem; color: var(--status-warn); font-weight: 600; text-align: center; margin-top: 0.5rem;">Verification incomplete</div>
+        {% endif %}
       </div>
     </div>
 
@@ -163,7 +186,7 @@
         <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
           <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase;">Exposure score</div>
           <div style="font-family: var(--font-heading); font-size: 1.5rem; font-weight: 800; color: #fff; margin-top: 0.15rem;">
-            {{ session.post_clean_inspect.score.score|default('0.0') }}
+            {% if session.post_clean_inspect and session.post_clean_inspect.score and session.post_clean_inspect.score.score is not none %}{{ session.post_clean_inspect.score.score }}{% else %}N/A{% endif %}
           </div>
         </div>
         <div style="background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
@@ -184,8 +207,17 @@
           {% endfor %}
           {% if not session.post_clean_inspect.normalized_findings %}
             <div style="text-align: center; color: var(--status-clean); font-weight: 600; padding: 1.5rem 0; font-size: 0.9rem;">
-              ✓ All signals removed successfully!
+              {% if session.cleaning_outcome_state == 'no_cleaning_performed' %}
+                No signals could be verified as cleaned (tool missing)
+              {% elif session.cleaning_outcome_state == 'cleaned_verification_incomplete' %}
+                Scrub complete (verification incomplete)
+              {% else %}
+                ✓ All signals removed successfully!
+              {% endif %}
             </div>
+          {% endif %}
+          {% if session.post_clean_inspect.verification_status == 'inconclusive' %}
+            <div style="font-size: 0.8rem; color: var(--status-warn); font-weight: 600; text-align: center; margin-top: 0.5rem;">Verification incomplete</div>
           {% endif %}
         {% else %}
           <div style="text-align: center; color: var(--text-dim); padding: 1.5rem 0;">Post-clean audit not run.</div>
@@ -216,11 +248,17 @@
       <div style="font-family: var(--font-heading); font-size: 1.75rem; font-weight: 800; color: var(--status-clean);">
         {{ session.size_delta_pct }}%
       </div>
-      <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.15rem;">
         {{ session.size - session.cleaned_size }} bytes saved
       </div>
     </div>
   </div>
+
+  {% if session.cleaning_outcome_state == 'no_cleaning_performed' %}
+    <div class="forensic-panel" style="border-left: 4px solid var(--status-warn); padding: 1.25rem 1.75rem; color: var(--status-warn); font-size: 0.85rem; line-height: 1.5;">
+      No PDF cleaning performed — required PDF tools unavailable. The original file was preserved unchanged because the required PDF cleaning tool was unavailable.
+    </div>
+  {% endif %}
 
   <!-- List of findings status & actions performed -->
   <div class="forensic-panel">

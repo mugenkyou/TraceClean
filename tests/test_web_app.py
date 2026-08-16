@@ -205,3 +205,215 @@ def test_session_ttl_expiration():
 
     # Should now return None and cleanup directory
     assert FileSession.get(session_id) is None
+
+
+def _ai_pdf() -> bytes:
+    """A small but structurally valid PDF carrying AI provenance in /Info."""
+    out = bytearray(b"%PDF-1.4\n")
+    out.extend(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+    out.extend(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
+    out.extend(b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n")
+    out.extend(b"4 0 obj\n<< /Producer (AI Generator v4) /Creator (TraceClean Test Suite) >>\nendobj\n")
+    out.extend(b"xref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000057 00000 n\n0000000112 00000 n\n0000000183 00000 n\n")
+    out.extend(b"trailer\n<< /Size 5 /Root 1 0 R /Info 4 0 R >>\nstartxref\n268\n%%EOF\n")
+    return bytes(out)
+
+
+class _Completed:
+    def __init__(self, rc):
+        self.returncode = rc
+
+
+def test_pdf_outcome_no_cleaning_performed(client, monkeypatch):
+    """State C: Required tools missing, PDF copied as-is, no cleaning performed."""
+    import engine
+    import container_meta
+
+    monkeypatch.setattr(
+        engine,
+        "capabilities",
+        lambda: {
+            "version": "dev",
+            "tools": {"c2patool": False, "exiftool": False, "qpdf": False},
+        },
+    )
+    monkeypatch.setattr(container_meta, "which", lambda cmd: None)
+
+    pdf_bytes = _ai_pdf()
+    data = {"file": (io.BytesIO(pdf_bytes), "sample.pdf")}
+    res = client.post("/upload", data=data, content_type="multipart/form-data")
+    assert res.status_code == 302
+    session_id = res.headers["Location"].split("/session/")[1].split("/inspect")[0]
+
+    session = FileSession.get(session_id)
+    assert session.verification_status == "inconclusive"
+
+    clean_res = client.post(f"/session/{session_id}/clean")
+    assert clean_res.status_code == 302
+
+    result_res = client.get(f"/session/{session_id}/result")
+    assert result_res.status_code == 200
+    assert b"No PDF cleaning performed" in result_res.data
+    assert b"original file was preserved unchanged" in result_res.data
+    assert b"Verification incomplete" in result_res.data
+
+    report_res = client.get(f"/session/{session_id}/download/report")
+    assert report_res.status_code == 200
+    json_data = json.loads(report_res.data)
+    assert json_data["cleaning_outcome_state"] == "no_cleaning_performed"
+    assert json_data["size_delta"] == 0
+
+
+def test_pdf_outcome_cleaned_verification_incomplete(client, monkeypatch):
+    """State B: Cleaning performed (exiftool), but verification tools missing (qpdf/c2patool)."""
+    import engine
+    import container_meta
+    import subprocess
+
+    monkeypatch.setattr(
+        engine,
+        "capabilities",
+        lambda: {
+            "version": "dev",
+            "tools": {"c2patool": False, "exiftool": True, "qpdf": False},
+        },
+    )
+
+    def fake_which(cmd):
+        if cmd == "exiftool":
+            return "/fake/bin/exiftool"
+        return None
+
+    def fake_run(cmd, **kwargs):
+        return _Completed(0)
+
+    monkeypatch.setattr(container_meta, "which", fake_which)
+    monkeypatch.setattr(container_meta.subprocess, "run", fake_run)
+
+    pdf_bytes = _ai_pdf()
+    data = {"file": (io.BytesIO(pdf_bytes), "sample.pdf")}
+    res = client.post("/upload", data=data, content_type="multipart/form-data")
+    assert res.status_code == 302
+    session_id = res.headers["Location"].split("/session/")[1].split("/inspect")[0]
+
+    clean_res = client.post(f"/session/{session_id}/clean")
+    assert clean_res.status_code == 302
+
+    result_res = client.get(f"/session/{session_id}/result")
+    assert result_res.status_code == 200
+    assert b"Cleaning completed with limited verification" in result_res.data
+
+    report_res = client.get(f"/session/{session_id}/download/report")
+    assert report_res.status_code == 200
+    json_data = json.loads(report_res.data)
+    assert json_data["cleaning_outcome_state"] == "cleaned_verification_incomplete"
+
+
+def test_pdf_outcome_fully_verified_and_cleaned(client, monkeypatch):
+    """State A: Cleaning performed, all tools available, verified clean."""
+    import engine
+    import container_meta
+    import subprocess
+
+    monkeypatch.setattr(
+        engine,
+        "capabilities",
+        lambda: {
+            "version": "dev",
+            "tools": {"c2patool": True, "exiftool": True, "qpdf": True},
+        },
+    )
+
+    def fake_which(cmd):
+        return f"/fake/bin/{cmd}"
+
+    def fake_run(cmd, **kwargs):
+        if cmd[0].endswith("qpdf"):
+            Path(cmd[-1]).write_bytes(b"%PDF-1.4\n% rebuilt\n%%EOF\n")
+        return _Completed(0)
+
+    monkeypatch.setattr(container_meta, "which", fake_which)
+    monkeypatch.setattr(container_meta.subprocess, "run", fake_run)
+
+    pdf_bytes = _ai_pdf()
+    data = {"file": (io.BytesIO(pdf_bytes), "sample.pdf")}
+    res = client.post("/upload", data=data, content_type="multipart/form-data")
+    assert res.status_code == 302
+    session_id = res.headers["Location"].split("/session/")[1].split("/inspect")[0]
+
+    clean_res = client.post(f"/session/{session_id}/clean")
+    assert clean_res.status_code == 302
+
+    result_res = client.get(f"/session/{session_id}/result")
+    assert result_res.status_code == 200
+    assert b"File Cleaned Successfully" in result_res.data
+
+    report_res = client.get(f"/session/{session_id}/download/report")
+    assert report_res.status_code == 200
+    json_data = json.loads(report_res.data)
+    assert json_data["cleaning_outcome_state"] == "fully_cleaned"
+
+
+def test_pdf_outcome_findings_remain(client, monkeypatch):
+    """State D: Cleaning performed, but post-clean inspection still detects signals."""
+    import engine
+    import container_meta
+    import subprocess
+
+    monkeypatch.setattr(
+        engine,
+        "capabilities",
+        lambda: {
+            "version": "dev",
+            "tools": {"c2patool": True, "exiftool": True, "qpdf": True},
+        },
+    )
+
+    def fake_which(cmd):
+        return f"/fake/bin/{cmd}"
+
+    def fake_run(cmd, **kwargs):
+        return _Completed(0)
+
+    original_inspect_bytes = engine.inspect_bytes
+    def mock_inspect_bytes(data_bytes, filename):
+        res = original_inspect_bytes(data_bytes, filename)
+        if b"% rebuilt" in data_bytes or len(data_bytes) > 0:
+            res["verification_status"] = "detected"
+            res["normalized_findings"] = [{
+                "id": "residue",
+                "scan_id": "1",
+                "category": "invisible_text",
+                "signal": "ZERO_WIDTH_SPACE",
+                "confidence": "confirmed",
+                "severity": "critical",
+                "location": "body",
+                "evidence": {},
+                "removable": True,
+                "removed": False
+            }]
+        return res
+
+    import app as app_module
+    monkeypatch.setattr(app_module, "inspect_bytes", mock_inspect_bytes)
+    monkeypatch.setattr(engine, "inspect_bytes", mock_inspect_bytes)
+    monkeypatch.setattr(container_meta, "which", fake_which)
+    monkeypatch.setattr(container_meta.subprocess, "run", fake_run)
+
+    pdf_bytes = _ai_pdf()
+    data = {"file": (io.BytesIO(pdf_bytes), "sample.pdf")}
+    res = client.post("/upload", data=data, content_type="multipart/form-data")
+    assert res.status_code == 302
+    session_id = res.headers["Location"].split("/session/")[1].split("/inspect")[0]
+
+    clean_res = client.post(f"/session/{session_id}/clean")
+    assert clean_res.status_code == 302
+
+    result_res = client.get(f"/session/{session_id}/result")
+    assert result_res.status_code == 200
+    assert b"Residue Signals Detected" in result_res.data
+
+    report_res = client.get(f"/session/{session_id}/download/report")
+    assert report_res.status_code == 200
+    json_data = json.loads(report_res.data)
+    assert json_data["cleaning_outcome_state"] == "findings_remain"
