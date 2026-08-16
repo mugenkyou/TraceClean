@@ -1,276 +1,515 @@
 {% extends "base.html" %}
 
-{% block title %}Inspection Findings — {{ session.original_filename }}{% endblock %}
+{% block title %}Forensic Provenance Audit — {{ session.original_filename }}{% endblock %}
 
 {% block content %}
-<!-- Inspection Header Card -->
-<div class="inspect-header">
-  <div class="file-info">
-    <div class="file-icon-badge">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-        <polyline points="13 2 13 9 20 9"/>
-      </svg>
-    </div>
-    <div>
-      <div class="file-meta-name">{{ session.original_filename }}</div>
-      <div class="file-meta-sub">
-        Kind: <strong>{{ session.detected_kind }}</strong> &bull; Size: <strong>{{ (session.size / 1024)|round(1) }} KB</strong>
-      </div>
-    </div>
-  </div>
+<style>
+  /* Forensic layout styles */
+  .inspect-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    gap: 1.5rem;
+  }
+  .forensic-header {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 1.5rem 2rem;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  @media (max-width: 768px) {
+    .forensic-header {
+      grid-template-columns: 1fr;
+    }
+  }
+  .grid-two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+  @media (max-width: 900px) {
+    .grid-two-col {
+      grid-template-columns: 1fr;
+    }
+  }
+  .forensic-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: 1.75rem;
+  }
+  .score-gauge-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--border-subtle);
+    padding-right: 1.5rem;
+    text-align: center;
+  }
+  @media (max-width: 600px) {
+    .score-gauge-area {
+      border-right: none;
+      padding-right: 0;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+  }
+  .metric-pill {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .metric-pill-title {
+    font-size: 0.7rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+  .metric-pill-value {
+    font-family: var(--font-heading);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #fff;
+  }
+  
+  /* Explorer Layout */
+  .explorer-layout {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 1px;
+    background: var(--border-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    height: 580px;
+  }
+  @media (max-width: 900px) {
+    .explorer-layout {
+      grid-template-columns: 1fr;
+      height: auto;
+    }
+  }
+  .explorer-sidebar {
+    background: var(--bg-surface);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+  }
+  .explorer-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .explorer-detail-panel {
+    background: rgba(15, 20, 32, 0.4);
+    padding: 2rem;
+    overflow-y: auto;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .finding-row {
+    background: rgba(255,255,255,0.01);
+    border: 1px solid var(--border-subtle);
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .finding-row:hover {
+    background: rgba(255,255,255,0.03);
+    border-color: rgba(0, 242, 254, 0.2);
+  }
+  .finding-row.active {
+    background: rgba(0, 242, 254, 0.05);
+    border-color: var(--accent-cyan);
+    box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
+  }
+  
+  /* Filter Selects */
+  .filter-select {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border-subtle);
+    color: #fff;
+    padding: 0.4rem 0.75rem;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-family: var(--font-main);
+  }
+  .filter-select:focus {
+    border-color: var(--accent-cyan);
+    outline: none;
+  }
+</style>
 
-  <div>
-    {% if session.verification_status == 'detected' %}
-      <span class="status-badge suspicious">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="8" x2="12" y2="12"/>
-          <line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-        Provenance Marks Detected
-      </span>
-    {% elif session.verification_status == 'not_detected' %}
-      <span class="status-badge clean">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-          <polyline points="22 4 12 14.01 9 11.01"/>
-        </svg>
-        Verified Clean (No Marks Found)
-      </span>
-    {% else %}
-      <span class="status-badge" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.3);">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="8" x2="12" y2="12"/>
-          <line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-        Verification Inconclusive / Limited
-      </span>
-    {% endif %}
-  </div>
-</div>
+<div class="inspect-container">
 
-<!-- Warning Banner for Inconclusive / Missing Tools -->
-{% if session.missing_tools %}
-  <div class="warning-banner">
-    <div class="warning-icon">⚠️</div>
+  <!-- 1. File Identity / Header -->
+  <div class="forensic-header">
     <div>
-      <strong>Degraded Capability Notice:</strong> Required inspection tool(s) <code>{{ session.missing_tools|join(', ') }}</code> are not installed on the server. Basic built-in parsers executed, but absence of deep metadata/C2PA manifests cannot be guaranteed.
-    </div>
-  </div>
-{% endif %}
-
-<!-- Provenance Exposure Score Card -->
-{% if session.inspect_report and session.inspect_report.score is defined %}
-<div style="background: var(--bg-card); border: 1px solid var(--border-glow); border-radius: var(--radius-lg); padding: 1.75rem 2rem; margin-bottom: 2rem; box-shadow: var(--shadow-main);">
-  <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem;">
-    <div>
-      <div style="font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Provenance Exposure Score</div>
-      <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-top: 0.25rem;">
-        <span style="font-family: var(--font-heading); font-size: 2.5rem; font-weight: 800; color: {% if session.inspect_report.score.score is none %}var(--status-warn){% elif session.inspect_report.score.score > 30 %}var(--status-danger){% elif session.inspect_report.score.score > 0 %}var(--status-warn){% else %}var(--status-clean){% endif %};">
-          {% if session.inspect_report.score.score is not none %}{{ session.inspect_report.score.score }}{% else %}N/A{% endif %}
+      <div style="font-size: 0.75rem; color: var(--accent-cyan); text-transform: uppercase; font-weight: 600; letter-spacing: 0.1em; margin-bottom: 0.25rem;">TraceClean Forensic Scanner</div>
+      <h1 style="font-family: var(--font-heading); font-size: 1.6rem; color: #fff; margin: 0;">{{ session.original_filename }}</h1>
+      <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        <span>Format: <strong style="color: #fff;">{{ session.detected_kind|upper }}</strong></span>
+        <span>&bull;</span>
+        <span>Size: <strong style="color: #fff;">{{ (session.size / 1024)|round(1) }} KB</strong></span>
+        <span>&bull;</span>
+        <span>Command-Line Tools: 
+          {% set all_tools = ['c2patool', 'exiftool', 'qpdf'] %}
+          {% for t in all_tools %}
+            <span style="font-family: var(--font-mono); font-size: 0.75rem; padding: 0.1rem 0.3rem; border-radius: 3px; background: {% if t in session.missing_tools %}rgba(239, 68, 68, 0.15); color: var(--status-danger);{% else %}rgba(16, 185, 129, 0.15); color: var(--status-clean);{% endif %};">
+              {{ t }}
+            </span>
+          {% endfor %}
         </span>
-        <span style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">/ 100 (v{{ session.inspect_report.score.score_version|default('1.0') }})</span>
       </div>
     </div>
 
-    {% if session.inspect_report.score.components %}
-      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-width: 450px;">
-        {% for cat, weight in session.inspect_report.score.components.items() %}
-          <span style="font-size: 0.75rem; font-family: var(--font-mono); background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.2); padding: 0.25rem 0.6rem; border-radius: var(--radius-sm); color: var(--accent-cyan);">
-            {{ cat }}: +{{ weight }}
-          </span>
-        {% endfor %}
+    <div>
+      {% if session.verification_status == 'detected' %}
+        <span class="status-badge suspicious" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
+          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-danger); box-shadow: 0 0 8px var(--status-danger);"></span>
+          Provenance Marks Detected
+        </span>
+      {% elif session.verification_status == 'not_detected' %}
+        <span class="status-badge clean" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
+          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-clean); box-shadow: 0 0 8px var(--status-clean);"></span>
+          Verified Clean (No Marks Found)
+        </span>
+      {% else %}
+        <span class="status-badge inconclusive" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
+          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-warn); box-shadow: 0 0 8px var(--status-warn);"></span>
+          Verification Inconclusive / Limited
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Missing Tools / Degraded Capabilities Warning Banner -->
+  {% if session.missing_tools %}
+    <div class="warning-banner" style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 1.25rem 1.75rem; border-radius: var(--radius-md); margin-bottom: 2rem; display: flex; align-items: flex-start; gap: 1rem; color: var(--status-warn);">
+      <div style="font-size: 1.5rem; line-height: 1;">⚠️</div>
+      <div>
+        <strong style="color: #fff;">Degraded Capability Notice:</strong>
+        <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem; line-height: 1.5;">
+          Required backend command-line tool(s) (<code>{{ session.missing_tools|join(', ') }}</code>) were unavailable on the server for this file format. Built-in fallback regex and structure check parsed standard file blocks, but complete container validity or C2PA credential exclusion cannot be guaranteed.
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  <!-- 2. Provenance Exposure Index & Overview Cards -->
+  <div class="grid-two-col">
+    <!-- Exposure score panel -->
+    {% if session.score %}
+      <div class="forensic-panel" style="display: flex; gap: 1.75rem;">
+        <div class="score-gauge-area">
+          <div style="font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em;">Exposure Index</div>
+          <div style="font-family: var(--font-heading); font-size: 3.25rem; font-weight: 800; color: {% if session.score.score is none %}var(--status-warn){% elif session.score.score > 30 %}var(--status-danger){% elif session.score.score > 0 %}var(--status-warn){% else %}var(--status-clean){% endif %}; margin-top: 0.25rem;">
+            {% if session.score.score is not none %}{{ session.score.score }}{% else %}N/A{% endif %}
+          </div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); font-family: var(--font-mono); margin-top: 0.25rem;">v{{ session.score.score_version }}</div>
+        </div>
+
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: center;">
+          <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-bottom: 0.5rem;">Diagnostic Derivation</div>
+          <div style="font-size: 0.8rem; color: #fff; line-height: 1.4;">
+            {{ session.score.derivation }}
+          </div>
+          <div style="font-size: 0.7rem; color: var(--text-dim); margin-top: 0.75rem; border-top: 1px dashed var(--border-subtle); padding-top: 0.5rem;">
+            * This score is a physical provenance and watermark indicator, NOT an AI-generation probability.
+          </div>
+        </div>
       </div>
     {% endif %}
-  </div>
 
-  <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); font-size: 0.85rem; color: var(--text-muted);">
-    <strong>Derivation:</strong> {{ session.inspect_report.score.derivation|default(session.status_reason) }}
-  </div>
-  <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-dim);">
-    <em>Note: Exposure score measures physical provenance signals &amp; metadata exposure only. It is explicitly not an AI-generated content probability.</em>
-  </div>
-</div>
-{% endif %}
-
-<!-- Categorized Findings Grid -->
-<div class="findings-grid">
-
-  <!-- Category 1: Layer A Invisible Unicode -->
-  {% if session.inspect_report and session.inspect_report.hits is defined %}
-  <div class="finding-category-card">
-    <div class="category-header">
-      <div class="category-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polyline points="4 7 4 4 20 4 20 7"/>
-          <line x1="9" y1="20" x2="15" y2="20"/>
-          <line x1="12" y1="4" x2="12" y2="20"/>
-        </svg>
-        Invisible Unicode &amp; Format Signals (Layer A)
+    <!-- Findings Overview Grid -->
+    <div class="forensic-panel" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+      <div class="metric-pill">
+        <span class="metric-pill-title">Total Findings</span>
+        <span class="metric-pill-value" style="color: var(--accent-cyan);">{{ session.normalized_findings|length }}</span>
       </div>
-      <span class="chip">{{ session.inspect_report.hits|length }} Hits</span>
-    </div>
-    <div class="category-body">
-      {% if session.inspect_report.hits %}
-        {% for hit in session.inspect_report.hits %}
-        <div class="finding-item">
-          <div class="finding-text">
-            <span class="finding-code">{{ hit.codepoint }}</span> {{ hit.name }}
-            <span style="color: var(--text-dim); font-size: 0.8rem;">(Count: x{{ hit.count }})</span>
-          </div>
-          <span class="confidence-pill {{ hit.confidence|default('probable') }}">{{ hit.confidence|default('probable') }}</span>
-        </div>
-        {% endfor %}
-      {% else %}
-        <div style="color: var(--text-muted); font-size: 0.9rem;">No zero-width spaces, soft hyphens, or bidi override characters found.</div>
-      {% endif %}
+      <div class="metric-pill">
+        <span class="metric-pill-title">Removable</span>
+        <span class="metric-pill-value">
+          {% set rem = namespace(count=0) %}
+          {% for f in session.normalized_findings %}
+            {% if f.removable %}{% set rem.count = rem.count + 1 %}{% endif %}
+          {% endfor %}
+          {{ rem.count }}
+        </span>
+      </div>
+      <div class="metric-pill" style="grid-column: span 2;">
+        <span class="metric-pill-title">Categories Detected</span>
+        <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem; display: flex; gap: 0.4rem; flex-wrap: wrap;">
+          {% set cats = [] %}
+          {% for f in session.normalized_findings %}
+            {% if f.category not in cats %}{% set _ = cats.append(f.category) %}{% endif %}
+          {% endfor %}
+          {% for c in cats %}
+            <span style="background: rgba(0, 242, 254, 0.08); padding: 0.1rem 0.4rem; border-radius: 4px; border: 1px solid rgba(0, 242, 254, 0.2);">{{ c }}</span>
+          {% endfor %}
+          {% if not cats %}None{% endif %}
+        </span>
+      </div>
     </div>
   </div>
+
+  <!-- 3. Provenance Explorer -->
+  <div class="explorer-layout">
+    <!-- Sidebar: list of findings -->
+    <div class="explorer-sidebar">
+      <!-- Search/Filters Area -->
+      <div style="padding: 1rem; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.5rem;">
+        <div style="font-size: 0.75rem; text-transform: uppercase; font-weight: 600; color: var(--text-muted);">Filter Findings</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+          <select id="category-filter" class="filter-select">
+            <option value="all">Category: All</option>
+            <option value="c2pa">C2PA</option>
+            <option value="invisible_text">Invisible Text</option>
+            <option value="metadata">Metadata</option>
+            <option value="statistical_text">Stylometry</option>
+          </select>
+          <select id="severity-filter" class="filter-select">
+            <option value="all">Severity: All</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Master list -->
+      <div class="explorer-list" id="explorer-master-list">
+        <!-- Findings elements dynamically loaded by JavaScript -->
+      </div>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="explorer-detail-panel" id="explorer-detail-view">
+      <!-- Detailed finding attributes will render here -->
+      <div style="margin: auto; text-align: center; color: var(--text-dim);">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom: 1rem;">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="16" x2="12" y2="12"/>
+          <line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+        <div>Select a finding card to inspect forensic metadata evidence.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Verification Limitations Section -->
+  {% if session.missing_tools %}
+    <div class="forensic-panel" style="border-left: 4px solid var(--status-warn); padding: 1.5rem 2rem;">
+      <h3 style="font-family: var(--font-heading); font-size: 1.1rem; color: var(--status-warn); margin-bottom: 0.5rem;">Verification Limitations &amp; Degraded Capabilities</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+        TraceClean cannot guarantee 100% clean status for this file format because required backend inspection dependencies are missing:
+      </p>
+      <ul style="margin: 0.5rem 0 0 1.25rem; font-size: 0.8rem; color: var(--text-dim); display: grid; gap: 0.25rem;">
+        {% if 'c2patool' in session.missing_tools %}
+          <li><strong>c2patool</strong>: Cryptographic C2PA assertion manifests cannot be extracted or verified.</li>
+        {% endif %}
+        {% if 'exiftool' in session.missing_tools %}
+          <li><strong>exiftool</strong>: Advanced vendor-specific camera tags, editor prompt records, and IPTC profile blocks cannot be scanned.</li>
+        {% endif %}
+        {% if 'qpdf' in session.missing_tools %}
+          <li><strong>qpdf</strong>: PDF structural stream validation and object graph rebuild checks are skipped.</li>
+        {% endif %}
+      </ul>
+    </div>
   {% endif %}
 
-  <!-- Category 2: Stylometry / Statistical Text -->
-  {% if session.inspect_report and session.inspect_report.stylometry is defined %}
-  <div class="finding-category-card">
-    <div class="category-header">
-      <div class="category-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-        </svg>
-        Text Stylometry Signals
-      </div>
-      <span class="chip">Score: {{ (session.inspect_report.stylometry.score * 100)|round(1) }}%</span>
+  <!-- 5. Primary Action Center -->
+  <div class="forensic-panel" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem;">
+    <div>
+      <h3 style="font-family: var(--font-heading); font-size: 1.15rem; color: #fff; margin: 0;">Forensic Provenance Scrubbing</h3>
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+        Strip C2PA manifest claims, metadata tags, and hidden steganography characters.
+      </p>
     </div>
-    <div class="category-body">
-      {% if session.inspect_report.stylometry.findings %}
-        {% for finding in session.inspect_report.stylometry.findings %}
-        <div class="finding-item">
-          <div class="finding-text">{{ finding }}</div>
-          <span class="confidence-pill {{ 'probable' if session.inspect_report.stylometry.score >= 0.65 else 'informational' }}">
-            {{ 'probable AI' if session.inspect_report.stylometry.score >= 0.65 else 'low signal' }}
+
+    <form id="clean-form" action="{{ url_for('clean_session', session_id=session.session_id) }}" method="POST" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+      <div style="display: flex; gap: 0.75rem;">
+        {% if session.detected_kind == 'text' %}
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+            <input type="checkbox" name="nfkc" value="1"> NFKC Norm
+          </label>
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+            <input type="checkbox" name="aggressive_homoglyphs" value="1"> Aggressive
+          </label>
+        {% elif session.detected_kind == 'image' %}
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+            <input type="checkbox" name="keep_non_ai_metadata" value="1"> Preserve camera EXIF
+          </label>
+        {% else %}
+          <label style="font-size: 0.8rem; color: var(--text-muted); display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+            <input type="checkbox" name="also_layer_a_text" value="1" checked> Scrub doc text spans
+          </label>
+        {% endif %}
+      </div>
+
+      <button type="submit" class="browse-btn" style="padding: 0.65rem 1.75rem;">
+        Clean File &amp; Strip Provenance
+      </button>
+    </form>
+  </div>
+
+  <!-- Technical Raw JSON Details Toggle -->
+  <div style="text-align: center; margin-bottom: 2rem;">
+    <button type="button" class="details-toggle" data-target="json-details" style="background: transparent; border: none; color: var(--text-dim); text-decoration: underline; font-size: 0.8rem; cursor: pointer; padding: 0.5rem;">
+      View Raw Technical JSON Report
+    </button>
+    <div id="json-details" style="display: none; text-align: left; background: #07090e; border: 1px solid var(--border-subtle); padding: 1.25rem; border-radius: var(--radius-md); margin-top: 1rem; font-family: var(--font-mono); font-size: 0.75rem; overflow-x: auto; color: var(--text-muted);">
+      <pre>{{ session.inspect_report|tojson(indent=2) }}</pre>
+    </div>
+  </div>
+
+</div>
+
+<!-- Client-side Provenance Explorer Engine -->
+<script>
+  const findings = {{ session.normalized_findings|tojson }};
+  
+  const explanations = {
+    "ZERO_WIDTH_SPACE": "Zero-width space (U+200B) is an invisible character often used to encode steganographic tracking payloads inside plain text.",
+    "BIDI_OVERRIDE_CONTROL": "Bidirectional (bidi) override controls force specific character reordering sequences to bypass standard filters or encode tracking bits.",
+    "TAG_CHARACTERS": "Tag characters (U+E0020 - U+E007F) are deprecated steganographic markers used to silently tag documents with metadata.",
+    "VARIATION_SELECTOR": "Variation selectors are invisible Unicode characters used to select glyph variations, often exploited to carry hidden payloads.",
+    "STYLOMETRY_AI_PATTERN": "Prose stylometry analysis detected statistical markers (length, word choices, repetitiveness) highly indicative of LLM generation.",
+    "C2PA_JUMBF_MANIFEST": "C2PA Claim manifest block contains digital signatures and cryptographic credentials showing the file's lineage and editor source.",
+    "C2PA_CONTAINER_MANIFEST": "C2PA Claim manifest block contains digital signatures and cryptographic credentials showing the file's lineage and editor source.",
+    "EXIF_AI_GENERATOR_TAG": "AI generator tags (e.g. Software, DigitalSourceType) explicitly state that this file was created or modified by an generative AI tool.",
+    "IMAGE_METADATA_HEADER": "Image metadata fields contain vendor-specific tags or software markers describing processing history.",
+    "DOCUMENT_AI_PROPERTIES": "Document custom properties or XML streams contain generative editor tags or tracking blocks.",
+    "CONTAINER_METADATA_ELEMENT": "Standard container metadata elements describe editor history, creation details, or structural paths.",
+    "EMBEDDED_TEXT_INVISIBLE_CONTROL": "Embedded text elements within the container contain invisible Layer A Unicode steganography."
+  };
+
+  function getExplanation(signal) {
+    return explanations[signal] || "Forensic metadata element representing a physical provenance marker.";
+  }
+
+  const listContainer = document.getElementById('explorer-master-list');
+  const detailPanel = document.getElementById('explorer-detail-view');
+  const catFilter = document.getElementById('category-filter');
+  const sevFilter = document.getElementById('severity-filter');
+
+  let selectedIndex = null;
+
+  function renderList() {
+    listContainer.innerHTML = '';
+    const filterCat = catFilter.value;
+    const filterSev = sevFilter.value;
+
+    findings.forEach((f, idx) => {
+      // Apply filters
+      if (filterCat !== 'all') {
+        if (filterCat === 'metadata' && f.category !== 'image_metadata' && f.category !== 'document_metadata') return;
+        if (filterCat !== 'metadata' && f.category !== filterCat) return;
+      }
+      if (filterSev !== 'all' && f.severity !== filterSev) return;
+
+      const row = document.createElement('div');
+      row.className = `finding-row ${selectedIndex === idx ? 'active' : ''}`;
+      row.innerHTML = `
+        <div>
+          <div style="font-weight: 600; color: #fff; font-size: 0.85rem; font-family: var(--font-mono);">${f.signal}</div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.2rem;">Category: ${f.category}</div>
+        </div>
+        <span class="badge" style="background: ${f.severity === 'critical' ? 'var(--status-danger-bg)' : 'rgba(255,255,255,0.05)'}; color: ${f.severity === 'critical' ? 'var(--status-danger)' : '#fff'}; font-size: 0.65rem;">
+          ${f.severity}
+        </span>
+      `;
+
+      row.addEventListener('click', () => {
+        selectedIndex = idx;
+        renderList();
+        renderDetail(f);
+      });
+
+      listContainer.appendChild(row);
+    });
+  }
+
+  function renderDetail(f) {
+    detailPanel.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--border-subtle); padding-bottom: 1rem; margin-bottom: 1.25rem;">
+        <div>
+          <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--accent-cyan); font-weight: 600; letter-spacing: 0.05em;">Forensic Artifact Details</div>
+          <h2 style="font-family: var(--font-heading); font-size: 1.35rem; color: #fff; margin-top: 0.25rem;">${f.signal}</h2>
+        </div>
+        <div style="display: flex; gap: 0.5rem;">
+          <span class="confidence-pill ${f.confidence}">${f.confidence}</span>
+          <span style="font-size: 0.75rem; background: ${f.severity === 'critical' ? 'var(--status-danger-bg)' : 'rgba(255,255,255,0.05)'}; color: ${f.severity === 'critical' ? 'var(--status-danger)' : '#fff'}; padding: 0.2rem 0.5rem; border-radius: 4px; text-transform: uppercase; font-weight: 600;">
+            ${f.severity}
           </span>
         </div>
-        {% endfor %}
-      {% else %}
-        <div style="color: var(--text-muted); font-size: 0.9rem;">Prose stylometry patterns appear natural or low entropy.</div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- Category 3: Container / Image / Provenance Metadata -->
-  {% if session.inspect_report %}
-  <div class="finding-category-card">
-    <div class="category-header">
-      <div class="category-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <circle cx="8.5" cy="8.5" r="1.5"/>
-          <polyline points="21 15 16 10 5 21"/>
-        </svg>
-        File Metadata &amp; C2PA Provenance
       </div>
-      <span class="chip">
-        {% if session.inspect_report.has_c2pa %}C2PA Manifest{% elif session.inspect_report.has_ai_metadata %}AI Metadata{% else %}Standard Metadata{% endif %}
-      </span>
-    </div>
-    <div class="category-body">
-      {% if session.inspect_report.findings %}
-        {% for item in session.inspect_report.findings %}
-        <div class="finding-item">
-          <div class="finding-text">
-            {% if item is mapping %}
-              {{ item.description|default(item.label|default(item)) }}
-            {% else %}
-              {{ item }}
-            {% endif %}
-          </div>
-          <span class="confidence-pill confirmed">confirmed</span>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Location</div>
+          <code style="display: block; margin-top: 0.25rem; font-size: 0.85rem; color: #fff; background: rgba(0,0,0,0.2); padding: 0.25rem 0.5rem; border-radius: 4px;">${f.location}</code>
         </div>
-        {% endfor %}
-      {% elif session.inspect_report.has_c2pa %}
-        <div class="finding-item">
-          <div class="finding-text">C2PA / Content Credentials manifest block detected</div>
-          <span class="confidence-pill confirmed">confirmed</span>
+        <div>
+          <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Removable Status</div>
+          <span style="display: inline-block; margin-top: 0.25rem; font-size: 0.85rem; font-weight: 600; color: ${f.removable ? 'var(--status-clean)' : 'var(--text-dim)'};">
+            ${f.removable ? 'Yes (Scrubable)' : 'No (Requires rewriting)'}
+          </span>
         </div>
-      {% elif session.inspect_report.has_ai_metadata %}
-        <div class="finding-item">
-          <div class="finding-text">AI Generator / Prompt metadata fields detected</div>
-          <span class="confidence-pill confirmed">confirmed</span>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.35rem;">Plain-Language Explanation</div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+          ${getExplanation(f.signal)}
+        </p>
+      </div>
+
+      <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.35rem;">Technical Evidence Payload</div>
+        <div style="flex: 1; background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; font-family: var(--font-mono); font-size: 0.75rem; overflow-y: auto; color: var(--accent-cyan); max-height: 220px;">
+          <pre style="margin: 0; white-space: pre-wrap;">${JSON.stringify(f.evidence, null, 2)}</pre>
         </div>
-      {% else %}
-        <div style="color: var(--text-muted); font-size: 0.9rem;">No AI provenance tags or C2PA manifests detected in file header/metadata.</div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
+      </div>
+    `;
+  }
 
-</div>
+  catFilter.addEventListener('change', renderList);
+  sevFilter.addEventListener('change', renderList);
 
-<!-- Cleaning Configuration Panel -->
-<div class="clean-panel">
-  <div class="clean-panel-title">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-    </svg>
-    Execute Deterministic Cleaning
-  </div>
-
-  <form id="clean-form" action="{{ url_for('clean_session', session_id=session.session_id) }}" method="POST">
-    <div class="options-group">
-      {% if session.detected_kind == 'text' %}
-        <label class="option-checkbox">
-          <input type="checkbox" name="nfkc" value="1">
-          <div class="option-info">
-            <span class="option-title">NFKC Normalization</span>
-            <span class="option-desc">Normalize compatibility characters to standard Unicode.</span>
-          </div>
-        </label>
-
-        <label class="option-checkbox">
-          <input type="checkbox" name="aggressive_homoglyphs" value="1">
-          <div class="option-info">
-            <span class="option-title">Aggressive Homoglyphs</span>
-            <span class="option-desc">Replace lookalike characters across non-Latin scripts.</span>
-          </div>
-        </label>
-      {% elif session.detected_kind == 'image' %}
-        <label class="option-checkbox">
-          <input type="checkbox" name="keep_non_ai_metadata" value="1">
-          <div class="option-info">
-            <span class="option-title">Keep Non-AI Metadata</span>
-            <span class="option-desc">Preserve standard camera EXIF while stripping AI tags.</span>
-          </div>
-        </label>
-      {% else %}
-        <label class="option-checkbox">
-          <input type="checkbox" name="also_layer_a_text" value="1" checked>
-          <div class="option-info">
-            <span class="option-title">Scrub Embedded Text Spans</span>
-            <span class="option-desc">Also apply Layer A Unicode clean to text within HTML/MD containers.</span>
-          </div>
-        </label>
-      {% endif %}
-    </div>
-
-    <button type="submit" class="clean-action-btn">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-        <polyline points="22 4 12 14.01 9 11.01"/>
-      </svg>
-      Clean File &amp; Strip Provenance Marks
-    </button>
-  </form>
-</div>
-
-<!-- Expandable Raw Technical Details -->
-<div>
-  <button type="button" class="details-toggle" data-target="json-details">
-    <span class="toggle-icon">▼</span> View Technical Inspection Details (Raw JSON)
-  </button>
-  <div id="json-details" class="json-box" style="display: none;">
-    <pre>{{ session.inspect_report|tojson(indent=2) }}</pre>
-  </div>
-</div>
+  // Initialize
+  renderList();
+  
+  // Toggles helper
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.details-toggle');
+    if (btn) {
+      const targetId = btn.getAttribute('data-target');
+      const target = document.getElementById(targetId);
+      if (target) {
+        target.style.display = target.style.display === 'none' ? 'block' : 'none';
+      }
+    }
+  });
+</script>
 {% endblock %}

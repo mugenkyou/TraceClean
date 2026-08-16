@@ -215,6 +215,8 @@ def download_report(session_id: str) -> Response:
         "status_reason": session.status_reason,
         "missing_tools": session.missing_tools,
         "verified_clean": session.verified_clean,
+        "normalized_findings": session.normalized_findings,
+        "score": session.score,
         "inspect_report": session.inspect_report,
         "clean_report": session.clean_report,
         "post_clean_inspect": session.post_clean_inspect,
@@ -370,4 +372,4 @@ def internal_error(e: Any) -> tuple[str, int]:
 if __name__ == "__main__":
     host = os.environ.get("TRACECLEAN_WEB_HOST", "127.0.0.1")
     port = int(os.environ.get("TRACECLEAN_WEB_PORT", "5000"))
-    app.run(host=host, port=port, debug=False)
+    app.run(host=host, port=port, debug=True)

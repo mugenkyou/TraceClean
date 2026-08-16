@@ -153,6 +153,14 @@ class FileSession:
         return self._data.get("size_delta_pct", 0.0)
 
     @property
+    def normalized_findings(self) -> list[dict[str, Any]]:
+        return self._data.get("normalized_findings", [])
+
+    @property
+    def score(self) -> dict[str, Any] | None:
+        return self._data.get("score")
+
+    @property
     def inspect_report(self) -> dict[str, Any] | None:
         return self._data.get("inspect_report")
 
@@ -191,6 +199,8 @@ class FileSession:
         self._data["missing_tools"] = res.get("missing_tools", [])
         self._data["verified_clean"] = res.get("verified_clean", False)
         self._data["inspect_report"] = res.get("report")
+        self._data["normalized_findings"] = res.get("normalized_findings", [])
+        self._data["score"] = res.get("score")
         self._save()
 
     def save_clean_result(self, cleaned_bytes: bytes, res: dict[str, Any], post_inspect_res: dict[str, Any] | None = None) -> Path:
