@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+
+{% block title %}Inspection Findings — {{ session.original_filename }}{% endblock %}
+
+{% block content %}
+<!-- Inspection Header Card -->
+<div class="inspect-header">
+  <div class="file-info">
+    <div class="file-icon-badge">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
+        <polyline points="13 2 13 9 20 9"/>
+      </svg>
+    </div>
+    <div>
+      <div class="file-meta-name">{{ session.original_filename }}</div>
+      <div class="file-meta-sub">
+        Kind: <strong>{{ session.detected_kind }}</strong> &bull; Size: <strong>{{ (session.size / 1024)|round(1) }} KB</strong>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    {% if session.verification_status == 'detected' %}
+      <span class="status-badge suspicious">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Provenance Marks Detected
+      </span>
+    {% elif session.verification_status == 'not_detected' %}
+      <span class="status-badge clean">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+          <polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        Verified Clean (No Marks Found)
+      </span>
+    {% else %}
+      <span class="status-badge" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.3);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        Verification Inconclusive / Limited
+      </span>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Warning Banner for Inconclusive / Missing Tools -->
+{% if session.missing_tools %}
+  <div class="warning-banner">
+    <div class="warning-icon">⚠️</div>
+    <div>
+      <strong>Degraded Capability Notice:</strong> Required inspection tool(s) <code>{{ session.missing_tools|join(', ') }}</code> are not installed on the server. Basic built-in parsers executed, but absence of deep metadata/C2PA manifests cannot be guaranteed.
+    </div>
+  </div>
+{% endif %}
+
+<!-- Provenance Exposure Score Card -->
+{% if session.inspect_report and session.inspect_report.score is defined %}
+<div style="background: var(--bg-card); border: 1px solid var(--border-glow); border-radius: var(--radius-lg); padding: 1.75rem 2rem; margin-bottom: 2rem; box-shadow: var(--shadow-main);">
+  <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.5rem;">
+    <div>
+      <div style="font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em;">Provenance Exposure Score</div>
+      <div style="display: flex; align-items: baseline; gap: 0.75rem; margin-top: 0.25rem;">
+        <span style="font-family: var(--font-heading); font-size: 2.5rem; font-weight: 800; color: {% if session.inspect_report.score.score is none %}var(--status-warn){% elif session.inspect_report.score.score > 30 %}var(--status-danger){% elif session.inspect_report.score.score > 0 %}var(--status-warn){% else %}var(--status-clean){% endif %};">
+          {% if session.inspect_report.score.score is not none %}{{ session.inspect_report.score.score }}{% else %}N/A{% endif %}
+        </span>
+        <span style="font-size: 0.9rem; color: var(--text-muted); font-family: var(--font-mono);">/ 100 (v{{ session.inspect_report.score.score_version|default('1.0') }})</span>
+      </div>
+    </div>
+
+    {% if session.inspect_report.score.components %}
+      <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; max-width: 450px;">
+        {% for cat, weight in session.inspect_report.score.components.items() %}
+          <span style="font-size: 0.75rem; font-family: var(--font-mono); background: rgba(0, 242, 254, 0.1); border: 1px solid rgba(0, 242, 254, 0.2); padding: 0.25rem 0.6rem; border-radius: var(--radius-sm); color: var(--accent-cyan);">
+            {{ cat }}: +{{ weight }}
+          </span>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); font-size: 0.85rem; color: var(--text-muted);">
+    <strong>Derivation:</strong> {{ session.inspect_report.score.derivation|default(session.status_reason) }}
+  </div>
+  <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-dim);">
+    <em>Note: Exposure score measures physical provenance signals &amp; metadata exposure only. It is explicitly not an AI-generated content probability.</em>
+  </div>
+</div>
+{% endif %}
+
+<!-- Categorized Findings Grid -->
+<div class="findings-grid">
+
+  <!-- Category 1: Layer A Invisible Unicode -->
+  {% if session.inspect_report and session.inspect_report.hits is defined %}
+  <div class="finding-category-card">
+    <div class="category-header">
+      <div class="category-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="4 7 4 4 20 4 20 7"/>
+          <line x1="9" y1="20" x2="15" y2="20"/>
+          <line x1="12" y1="4" x2="12" y2="20"/>
+        </svg>
+        Invisible Unicode &amp; Format Signals (Layer A)
+      </div>
+      <span class="chip">{{ session.inspect_report.hits|length }} Hits</span>
+    </div>
+    <div class="category-body">
+      {% if session.inspect_report.hits %}
+        {% for hit in session.inspect_report.hits %}
+        <div class="finding-item">
+          <div class="finding-text">
+            <span class="finding-code">{{ hit.codepoint }}</span> {{ hit.name }}
+            <span style="color: var(--text-dim); font-size: 0.8rem;">(Count: x{{ hit.count }})</span>
+          </div>
+          <span class="confidence-pill {{ hit.confidence|default('probable') }}">{{ hit.confidence|default('probable') }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div style="color: var(--text-muted); font-size: 0.9rem;">No zero-width spaces, soft hyphens, or bidi override characters found.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Category 2: Stylometry / Statistical Text -->
+  {% if session.inspect_report and session.inspect_report.stylometry is defined %}
+  <div class="finding-category-card">
+    <div class="category-header">
+      <div class="category-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Text Stylometry Signals
+      </div>
+      <span class="chip">Score: {{ (session.inspect_report.stylometry.score * 100)|round(1) }}%</span>
+    </div>
+    <div class="category-body">
+      {% if session.inspect_report.stylometry.findings %}
+        {% for finding in session.inspect_report.stylometry.findings %}
+        <div class="finding-item">
+          <div class="finding-text">{{ finding }}</div>
+          <span class="confidence-pill {{ 'probable' if session.inspect_report.stylometry.score >= 0.65 else 'informational' }}">
+            {{ 'probable AI' if session.inspect_report.stylometry.score >= 0.65 else 'low signal' }}
+          </span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div style="color: var(--text-muted); font-size: 0.9rem;">Prose stylometry patterns appear natural or low entropy.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Category 3: Container / Image / Provenance Metadata -->
+  {% if session.inspect_report %}
+  <div class="finding-category-card">
+    <div class="category-header">
+      <div class="category-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        File Metadata &amp; C2PA Provenance
+      </div>
+      <span class="chip">
+        {% if session.inspect_report.has_c2pa %}C2PA Manifest{% elif session.inspect_report.has_ai_metadata %}AI Metadata{% else %}Standard Metadata{% endif %}
+      </span>
+    </div>
+    <div class="category-body">
+      {% if session.inspect_report.findings %}
+        {% for item in session.inspect_report.findings %}
+        <div class="finding-item">
+          <div class="finding-text">
+            {% if item is mapping %}
+              {{ item.description|default(item.label|default(item)) }}
+            {% else %}
+              {{ item }}
+            {% endif %}
+          </div>
+          <span class="confidence-pill confirmed">confirmed</span>
+        </div>
+        {% endfor %}
+      {% elif session.inspect_report.has_c2pa %}
+        <div class="finding-item">
+          <div class="finding-text">C2PA / Content Credentials manifest block detected</div>
+          <span class="confidence-pill confirmed">confirmed</span>
+        </div>
+      {% elif session.inspect_report.has_ai_metadata %}
+        <div class="finding-item">
+          <div class="finding-text">AI Generator / Prompt metadata fields detected</div>
+          <span class="confidence-pill confirmed">confirmed</span>
+        </div>
+      {% else %}
+        <div style="color: var(--text-muted); font-size: 0.9rem;">No AI provenance tags or C2PA manifests detected in file header/metadata.</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- Cleaning Configuration Panel -->
+<div class="clean-panel">
+  <div class="clean-panel-title">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+    </svg>
+    Execute Deterministic Cleaning
+  </div>
+
+  <form id="clean-form" action="{{ url_for('clean_session', session_id=session.session_id) }}" method="POST">
+    <div class="options-group">
+      {% if session.detected_kind == 'text' %}
+        <label class="option-checkbox">
+          <input type="checkbox" name="nfkc" value="1">
+          <div class="option-info">
+            <span class="option-title">NFKC Normalization</span>
+            <span class="option-desc">Normalize compatibility characters to standard Unicode.</span>
+          </div>
+        </label>
+
+        <label class="option-checkbox">
+          <input type="checkbox" name="aggressive_homoglyphs" value="1">
+          <div class="option-info">
+            <span class="option-title">Aggressive Homoglyphs</span>
+            <span class="option-desc">Replace lookalike characters across non-Latin scripts.</span>
+          </div>
+        </label>
+      {% elif session.detected_kind == 'image' %}
+        <label class="option-checkbox">
+          <input type="checkbox" name="keep_non_ai_metadata" value="1">
+          <div class="option-info">
+            <span class="option-title">Keep Non-AI Metadata</span>
+            <span class="option-desc">Preserve standard camera EXIF while stripping AI tags.</span>
+          </div>
+        </label>
+      {% else %}
+        <label class="option-checkbox">
+          <input type="checkbox" name="also_layer_a_text" value="1" checked>
+          <div class="option-info">
+            <span class="option-title">Scrub Embedded Text Spans</span>
+            <span class="option-desc">Also apply Layer A Unicode clean to text within HTML/MD containers.</span>
+          </div>
+        </label>
+      {% endif %}
+    </div>
+
+    <button type="submit" class="clean-action-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+        <polyline points="22 4 12 14.01 9 11.01"/>
+      </svg>
+      Clean File &amp; Strip Provenance Marks
+    </button>
+  </form>
+</div>
+
+<!-- Expandable Raw Technical Details -->
+<div>
+  <button type="button" class="details-toggle" data-target="json-details">
+    <span class="toggle-icon">▼</span> View Technical Inspection Details (Raw JSON)
+  </button>
+  <div id="json-details" class="json-box" style="display: none;">
+    <pre>{{ session.inspect_report|tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% endblock %}

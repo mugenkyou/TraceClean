@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Local Scan History &mdash; TraceClean{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 1080px; margin: 0 auto;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+    <div>
+      <h1 style="font-size: 1.75rem; margin: 0;">Local Scan History Log</h1>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem;">
+        Local SQLite scan records (<code>contenttrace.db</code>). Metadata and findings are persisted locally without storing uploaded file bytes.
+      </p>
+    </div>
+  </div>
+
+  {% if scans %}
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left;">
+            <th style="padding: 0.75rem;">Scan ID</th>
+            <th style="padding: 0.75rem;">Filename</th>
+            <th style="padding: 0.75rem;">Kind</th>
+            <th style="padding: 0.75rem;">Size</th>
+            <th style="padding: 0.75rem;">Status</th>
+            <th style="padding: 0.75rem;">Exposure Score</th>
+            <th style="padding: 0.75rem;">Findings</th>
+            <th style="padding: 0.75rem;">Export Report</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for scan in scans %}
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 0.75rem; font-family: var(--font-mono); color: var(--accent-cyan);">{{ scan.scan_id }}</td>
+              <td style="padding: 0.75rem;"><strong>{{ scan.original_filename }}</strong></td>
+              <td style="padding: 0.75rem;">{{ scan.kind }}</td>
+              <td style="padding: 0.75rem;">{{ (scan.size / 1024)|round(1) }} KB</td>
+              <td style="padding: 0.75rem;">
+                <span class="badge" style="background: {% if scan.verification_status == 'detected' %}rgba(239, 68, 68, 0.2){% elif scan.verification_status == 'not_detected' %}rgba(16, 185, 129, 0.2){% else %}rgba(245, 158, 11, 0.2){% endif %};">
+                  {{ scan.verification_status }}
+                </span>
+              </td>
+              <td style="padding: 0.75rem; font-weight: 700;">
+                {% if scan.score is not none %}{{ scan.score }}{% else %}N/A{% endif %}
+              </td>
+              <td style="padding: 0.75rem;">{{ scan.finding_count }}</td>
+              <td style="padding: 0.75rem;">
+                <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='html') }}" target="_blank" style="color: var(--accent-cyan); font-size: 0.8rem; text-decoration: none;">HTML Report &rarr;</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div style="text-align: center; padding: 3rem; color: var(--text-muted);">
+      No local scan history found. Run your first inspection via single audit or batch scanner.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

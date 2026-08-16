@@ -8,9 +8,15 @@ used by server.py, the CLI scripts, and the web application.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from common import (
     MAX_INPUT_BYTES,
@@ -148,8 +154,17 @@ def inspect_bytes(data: bytes, name: str) -> dict[str, Any]:
 
     verified_clean = (verification_status == "not_detected")
 
+    # Phase 2 Intelligence: Normalize Findings & Compute Exposure Score
+    scan_id = f"scan_{uuid.uuid4().hex[:8]}"
+    from provenance.adapters.registry import normalize_findings
+    from provenance.scoring import compute_provenance_exposure_score
+
+    findings = normalize_findings(report, kind, scan_id)
+    score_obj = compute_provenance_exposure_score(findings, verification_status, missing_tools)
+
     return {
         "ok": True,
+        "scan_id": scan_id,
         "kind": kind,
         "report": report,
         "suspicious": has_marks,
@@ -157,6 +172,8 @@ def inspect_bytes(data: bytes, name: str) -> dict[str, Any]:
         "status_reason": status_reason,
         "missing_tools": missing_tools,
         "verified_clean": verified_clean,
+        "normalized_findings": [f.to_dict() for f in findings],
+        "score": score_obj.to_dict(),
     }
 
 

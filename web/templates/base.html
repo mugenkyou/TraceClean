@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}TraceClean — AI Content Provenance & Forensics{% endblock %}</title>
+  <meta name="description" content="Forensic inspection and deterministic cleaning for AI provenance marks, C2PA, and metadata across text and binary containers.">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+</head>
+<body>
+
+  <!-- Navigation Bar -->
+  <nav class="navbar">
+    <div class="container nav-content">
+      <a href="{{ url_for('index') }}" class="brand">
+        <div class="brand-icon">TC</div>
+        <div>
+          <span class="brand-name">TraceClean</span>
+          <span class="brand-tagline">AI Forensics</span>
+        </div>
+      </a>
+      <div class="nav-links">
+        <span class="privacy-badge">100% Local In-Process</span>
+        <a href="{{ url_for('index') }}" class="nav-link">Single Audit</a>
+        <a href="{{ url_for('batch_page') }}" class="nav-link">Batch Scanner</a>
+        <a href="{{ url_for('history_page') }}" class="nav-link">Scan History</a>
+        <a href="https://github.com/mugenkyou/TraceClean" target="_blank" class="nav-link">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Capabilities Status Bar -->
+  {% if capabilities %}
+  <div class="capabilities-bar">
+    <div class="container capabilities-content">
+      <div><strong>Server Engine:</strong> v{{ capabilities.version }}</div>
+      <div class="capability-tags">
+        <span class="cap-tag {% if capabilities.tools.c2patool %}active{% else %}inactive{% endif %}">
+          c2patool {% if capabilities.tools.c2patool %}✓{% else %}✗{% endif %}
+        </span>
+        <span class="cap-tag {% if capabilities.tools.exiftool %}active{% else %}inactive{% endif %}">
+          exiftool {% if capabilities.tools.exiftool %}✓{% else %}✗{% endif %}
+        </span>
+        <span class="cap-tag {% if capabilities.tools.qpdf %}active{% else %}inactive{% endif %}">
+          qpdf {% if capabilities.tools.qpdf %}✓{% else %}✗{% endif %}
+        </span>
+        <span class="cap-tag active">
+          Stylometry ✓
+        </span>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Main Content Body -->
+  <main class="main-content">
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+
+  <!-- Loading Overlay Spinner -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div id="loading-text" class="loading-text">Processing File...</div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container footer-content">
+      <div>
+        <strong>TraceClean</strong> &mdash; Deterministic AI Content Provenance & Forensics Engine.
+      </div>
+      <div>
+        Privacy Hygiene for Content You Own &bull; Zero External Network Calls
+      </div>
+    </div>
+  </footer>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

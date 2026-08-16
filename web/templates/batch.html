@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}Batch Scanner &mdash; TraceClean{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 960px; margin: 0 auto;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+    <div>
+      <h1 style="font-size: 1.75rem; margin: 0;">Multi-File Batch Scanner</h1>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem;">
+        Inspect multiple text files, images, or documents simultaneously using TraceClean's deterministic in-process engine.
+      </p>
+    </div>
+  </div>
+
+  <form id="batch-form" action="{{ url_for('process_batch') }}" method="POST" enctype="multipart/form-data">
+    <div class="dropzone" id="batch-dropzone" style="border: 2px dashed var(--border-glow); padding: 3rem; text-align: center; border-radius: var(--radius-lg); cursor: pointer; transition: all 0.2s;">
+      <input type="file" name="files" id="batch-file-input" multiple style="display: none;">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--accent-cyan); margin-bottom: 1rem;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div style="font-size: 1.1rem; font-weight: 600; color: #fff;">Select or Drag Multiple Files</div>
+      <div style="font-size: 0.85rem; color: var(--text-dim); margin-top: 0.5rem;">
+        Supports PNG, JPEG, WebP, AVIF, HEIC, PDF, DOCX, ODT, SVG, HTML, Markdown, and TXT files.
+      </div>
+      <div id="batch-file-list" style="margin-top: 1rem; font-size: 0.9rem; color: var(--accent-cyan); font-family: var(--font-mono);"></div>
+    </div>
+
+    <div style="margin-top: 1.5rem; text-align: right;">
+      <button type="submit" class="btn btn-primary" id="batch-submit-btn" disabled>
+        Start Batch Inspection &rarr;
+      </button>
+    </div>
+  </form>
+
+  <div id="batch-results" style="display: none; margin-top: 2rem; border-top: 1px solid var(--border-subtle); padding-top: 1.5rem;">
+    <h2 style="font-size: 1.25rem;">Batch Results</h2>
+    <div id="batch-summary" style="margin-bottom: 1rem; font-size: 0.95rem;"></div>
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left;">
+            <th style="padding: 0.75rem;">Filename</th>
+            <th style="padding: 0.75rem;">Kind</th>
+            <th style="padding: 0.75rem;">Status</th>
+            <th style="padding: 0.75rem;">Score</th>
+            <th style="padding: 0.75rem;">Findings</th>
+          </tr>
+        </thead>
+        <tbody id="batch-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  const fileInput = document.getElementById('batch-file-input');
+  const dropzone = document.getElementById('batch-dropzone');
+  const fileList = document.getElementById('batch-file-list');
+  const submitBtn = document.getElementById('batch-submit-btn');
+  const form = document.getElementById('batch-form');
+  const resultsDiv = document.getElementById('batch-results');
+  const summaryDiv = document.getElementById('batch-summary');
+  const tbody = document.getElementById('batch-table-body');
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--accent-cyan)';
+    dropzone.style.background = 'rgba(0, 242, 254, 0.05)';
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.style.borderColor = 'var(--border-glow)';
+    dropzone.style.background = 'transparent';
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--border-glow)';
+    dropzone.style.background = 'transparent';
+    if (e.dataTransfer.files.length > 0) {
+      fileInput.files = e.dataTransfer.files;
+      updateFileList();
+    }
+  });
+
+  fileInput.addEventListener('change', updateFileList);
+
+  function updateFileList() {
+    const files = fileInput.files;
+    if (files.length === 0) {
+      fileList.textContent = '';
+      submitBtn.disabled = true;
+    } else {
+      fileList.textContent = `${files.length} file(s) selected`;
+      submitBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Scanning Batch...';
+
+    const formData = new FormData(form);
+    try {
+      const resp = await fetch('{{ url_for("process_batch") }}', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await resp.json();
+
+      tbody.innerHTML = '';
+      summaryDiv.innerHTML = `<strong>Scanned:</strong> ${data.scanned_files} / ${data.total_files} files &bull; <strong>Average Exposure Score:</strong> ${data.average_score !== null ? data.average_score : 'N/A'}`;
+
+      data.items.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border-subtle)';
+        const scoreStr = item.score && item.score.score !== null ? item.score.score : 'N/A';
+        tr.innerHTML = `
+          <td style="padding: 0.75rem;"><code>${item.original_filename}</code></td>
+          <td style="padding: 0.75rem;">${item.kind}</td>
+          <td style="padding: 0.75rem;"><span class="badge" style="background: rgba(255,255,255,0.05);">${item.verification_status}</span></td>
+          <td style="padding: 0.75rem; font-weight: 700;">${scoreStr}</td>
+          <td style="padding: 0.75rem;">${item.findings ? item.findings.length : 0} finding(s)</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      resultsDiv.style.display = 'block';
+    } catch (err) {
+      alert('Batch scan error: ' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Start Batch Inspection \u2192';
+    }
+  });
+</script>
+{% endblock %}
