@@ -27,7 +27,19 @@ Vendors / ecosystems (class-level): **Claude**, **Gemini / SynthID-Text**, **Ope
 
 Skill path: [`skills/traceclean/`](skills/traceclean/)  
 Service path: [`service/`](service/)  
+Web UI path: [`web/`](web/) &mdash; see [`docs/web-app.md`](docs/web-app.md)  
 (migration: formerly `remove-claude-marks`; slash alias `/remove-claude-marks` still documented)
+
+## Web Application (Browser UI)
+
+TraceClean ships a local browser application for drag-and-drop file inspection and cleaning.
+
+```bash
+make serve-web
+# Starts Flask Web App at http://127.0.0.1:5000
+```
+
+Upload any supported document or image (`.png`, `.jpg`, `.webp`, `.svg`, `.pdf`, `.docx`, `.odt`, `.html`, `.md`, `.txt`) to inspect provenance signals and download the cleaned artifact. See [`docs/web-app.md`](docs/web-app.md) for architecture and session details.
 
 ## Install (agent skill)
 

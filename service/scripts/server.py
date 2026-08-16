@@ -35,17 +35,13 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import (  # noqa: E402
-    MAX_INPUT_BYTES,
-    looks_binary,
-    eprint,
-    which,
+from common import MAX_INPUT_BYTES, eprint, which  # noqa: E402
+from engine import (  # noqa: E402
+    ALLOWED_CLEAN_OPTIONS,
+    capabilities,
+    clean_bytes,
+    inspect_bytes,
 )
-from container_meta import clean_container, inspect_container  # noqa: E402
-from format_dispatch import classify_bytes  # noqa: E402
-from image_meta import clean_image, inspect_image  # noqa: E402
-from score_stylometry import score_text_stylometry  # noqa: E402
-from text_unicode import clean_text, inspect_text  # noqa: E402
 
 VERSION = os.environ.get("TRACECLEAN_SERVER_VERSION", "dev")
 
@@ -57,40 +53,9 @@ API_KEY = os.environ.get("TRACECLEAN_SERVER_API_KEY", "").strip()
 # stays well under MAX_INPUT_BYTES for the same cap.
 MAX_BODY_BYTES = MAX_INPUT_BYTES + (MAX_INPUT_BYTES >> 1)
 
-ALLOWED_CLEAN_OPTIONS = {
-    "nfkc": bool,
-    "aggressive_homoglyphs": bool,
-    "keep_non_ai_metadata": bool,
-    "also_layer_a_text": bool,
-    "remove_pixel": str,
-    "strip_all_metadata": bool,
-}
-
 
 def _json_ok(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-
-
-def capabilities() -> dict[str, Any]:
-    return {
-        "version": VERSION,
-        "tools": {
-            "c2patool": which("c2patool") is not None,
-            "exiftool": which("exiftool") is not None,
-            "qpdf": which("qpdf") is not None,
-        },
-        "pixel_backends": {
-            "ctrlregen": bool(os.environ.get("NOAI_WATERMARK_DIR")),
-            "diffusion": bool(os.environ.get("MARKDIFFUSION_DIR")),
-        },
-        "scorers": {
-            "synthid": bool(os.environ.get("REVERSE_SYNTHID_DIR")),
-            "stylometry": True,
-        },
-        "harnesses": {
-            "markllm": bool(os.environ.get("MARKLLM_DIR")),
-        },
-    }
 
 
 # OpenAPI generation. The spec is built from this single declarative table
@@ -404,82 +369,19 @@ class Handler(BaseHTTPRequestHandler):
             self._respond(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "internal error"})
 
     def _handle_inspect(self, data: bytes, name: str) -> None:
-        kind = classify_bytes(data, Path(name).suffix)
-        with tempfile.TemporaryDirectory(prefix="wm-inspect-") as tmp:
-            path = _tmp_path(Path(tmp), name or "input")
-            path.write_bytes(data)
-            if kind == "text":
-                if looks_binary(data):
-                    raise ValueError("refusing to inspect bytes that look like a binary container as text")
-                raw_text = data.decode("utf-8", errors="surrogateescape")
-                report = inspect_text(raw_text).to_dict()
-                s_rep = score_text_stylometry(raw_text, path=name or "<text>")
-                report["stylometry"] = s_rep.to_dict()
-            elif kind == "image":
-                report = inspect_image(path).to_dict()
-            else:
-                report = inspect_container(path).to_dict()
-        suspicious = bool(report.get("suspicious_total")) or bool(
-            report.get("has_c2pa") or report.get("has_ai_metadata")
-        ) or bool(report.get("stylometry", {}).get("score", 0.0) >= 0.65)
-        self._respond(HTTPStatus.OK, {"ok": True, "kind": kind, "report": report, "suspicious": suspicious})
+        res = inspect_bytes(data, name)
+        self._respond(HTTPStatus.OK, res)
 
     def _handle_clean(self, data: bytes, name: str, body: dict[str, Any]) -> None:
-        kind = classify_bytes(data, Path(name).suffix)
         options = body.get("options")
-        if options is None:
-            options = {}
-        if not isinstance(options, dict):
-            raise ValueError("'options' must be an object")
-        for key in options:
-            if key not in ALLOWED_CLEAN_OPTIONS:
-                raise ValueError(f"unknown option: {key}")
-
-        with tempfile.TemporaryDirectory(prefix="wm-clean-") as tmp:
-            tmpdir = Path(tmp)
-            src = _tmp_path(tmpdir, name or "input")
-            src.write_bytes(data)
-            if kind == "text":
-                if looks_binary(data):
-                    raise ValueError("refusing to clean bytes that look like a binary container as text")
-                text = data.decode("utf-8", errors="surrogateescape")
-                cleaned, stats = clean_text(
-                    text,
-                    nfkc=bool(options.get("nfkc")),
-                    aggressive_homoglyphs=bool(options.get("aggressive_homoglyphs")),
-                )
-                cleaned_bytes = cleaned.encode("utf-8", errors="surrogateescape")
-                report: dict[str, Any] = {"kind": "text", "stats": stats, "length": len(cleaned)}
-            elif kind == "image":
-                dest = tmpdir / "out.png"
-                strip_all = not bool(options.get("keep_non_ai_metadata"))
-                if "strip_all_metadata" in options:
-                    strip_all = bool(options["strip_all_metadata"])
-                remove_pixel = options.get("remove_pixel")
-                if remove_pixel not in (None, "ctrlregen", "diffusion"):
-                    raise ValueError("remove_pixel must be one of: ctrlregen, diffusion")
-                result = clean_image(
-                    src,
-                    dest,
-                    strip_all_metadata=strip_all,
-                    remove_pixel=remove_pixel,
-                )
-                cleaned_bytes = dest.read_bytes()
-                report = {"kind": "image", **result}
-            else:
-                dest = _tmp_path(tmpdir, f"out{Path(name).suffix}")
-                result = clean_container(src, dest, also_layer_a_text=bool(options.get("also_layer_a_text", True)))
-                cleaned_bytes = dest.read_bytes()
-                report = {"kind": "container", **result}
-            report.pop("input", None)
-            report.pop("output", None)
+        cleaned_bytes, res = clean_bytes(data, name, options)
         self._respond(
             HTTPStatus.OK,
             {
                 "ok": True,
-                "kind": kind,
+                "kind": res["kind"],
                 "cleaned": base64.b64encode(cleaned_bytes).decode("ascii"),
-                "report": report,
+                "report": res["report"],
             },
         )
 
