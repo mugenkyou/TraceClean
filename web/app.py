@@ -39,7 +39,7 @@ from engine import capabilities, clean_bytes, inspect_bytes
 from session import FileSession, start_janitor
 
 from provenance.batch import run_batch_scan
-from provenance.db import get_scan as get_db_scan, list_scans as list_db_scans, save_scan as save_db_scan
+from provenance.db import delete_scan as delete_db_scan, get_scan as get_db_scan, list_scans as list_db_scans, save_scan as save_db_scan
 from provenance.reports.html_report import generate_html_report
 from provenance.reports.json_report import generate_json_report
 from provenance.reports.zip_export import build_batch_zip
@@ -57,6 +57,57 @@ app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
 # Start background janitor for session TTL cleanup (every 5 mins)
 start_janitor(interval_seconds=300)
+
+
+def session_to_scan_result(session: FileSession) -> ProvenanceScanResult:
+    """Convert an in-memory FileSession to a unified ProvenanceScanResult model."""
+    score_dict = session.score or {}
+    score_obj = ProvenanceScore(
+        score=score_dict.get("score"),
+        score_version=score_dict.get("score_version", "1.0"),
+        verification_status=score_dict.get("verification_status", "inconclusive"),
+        verified_clean=bool(score_dict.get("verified_clean", False)),
+        derivation=score_dict.get("derivation", ""),
+    )
+    findings = [Finding.from_dict(fd) for fd in session.normalized_findings]
+    return ProvenanceScanResult(
+        scan_id=session.session_id,
+        original_filename=session.original_filename,
+        kind=session.detected_kind or "unknown",
+        size=session.size,
+        created_at=session.created_at,
+        verification_status=session.verification_status,
+        verified_clean=session.verified_clean,
+        missing_tools=session.missing_tools,
+        status_reason=session.status_reason,
+        findings=findings,
+        score=score_obj,
+        raw_report=session.inspect_report or {},
+    )
+
+
+def build_single_session_zip(session: FileSession) -> bytes:
+    """Build a secure single-audit ZIP archive containing cleaned file, HTML, and JSON reports."""
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        scan_res = session_to_scan_result(session)
+        
+        # 1. JSON report
+        json_rep = generate_json_report(scan_res, clean_report=session.clean_report)
+        z.writestr(f"report_{Path(session.original_filename).stem}.json", json_rep)
+        
+        # 2. HTML report
+        html_rep = generate_html_report(scan_res)
+        z.writestr(f"report_{Path(session.original_filename).stem}.html", html_rep)
+        
+        # 3. Cleaned file if exists
+        cleaned_bytes = session.read_cleaned_bytes()
+        if cleaned_bytes is not None:
+            z.writestr(f"cleaned_{session.original_filename}", cleaned_bytes)
+        else:
+            z.writestr(f"original_{session.original_filename}", session.read_input_bytes())
+    return buf.getvalue()
 
 
 @app.context_processor
@@ -197,41 +248,71 @@ def download_cleaned(session_id: str) -> Response:
 
 @app.route("/session/<session_id>/download/report", methods=["GET"])
 def download_report(session_id: str) -> Response:
-    """Safely download JSON forensic inspection/clean report."""
+    """Safely download JSON/HTML forensic inspection/clean report."""
     session = FileSession.get(session_id)
     if session is None:
         return make_response(render_template("error.html", error="Session missing or expired."), 440)
 
-    report_data = {
-        "session_id": session.session_id,
-        "original_filename": session.original_filename,
-        "size": session.size,
-        "cleaned_size": session.cleaned_size,
-        "size_delta": session.size_delta,
-        "size_delta_pct": session.size_delta_pct,
-        "detected_kind": session.detected_kind,
-        "suspicious": session.suspicious,
-        "verification_status": session.verification_status,
-        "status_reason": session.status_reason,
-        "missing_tools": session.missing_tools,
-        "verified_clean": session.verified_clean,
-        "normalized_findings": session.normalized_findings,
-        "score": session.score,
-        "cleaning_outcome_state": session.cleaning_outcome_state,
-        "inspect_report": session.inspect_report,
-        "clean_report": session.clean_report,
-        "post_clean_inspect": session.post_clean_inspect,
-    }
+    fmt = request.args.get("format", "json").lower()
 
-    report_bytes = json.dumps(report_data, indent=2, ensure_ascii=False).encode("utf-8")
-    buf = io.BytesIO(report_bytes)
+    if fmt == "html":
+        scan_res = session_to_scan_result(session)
+        html_content = generate_html_report(scan_res)
+        response = make_response(html_content, 200)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        download_name = f"traceclean_report_{Path(session.original_filename).stem}.html"
+        response.headers["Content-Disposition"] = f"attachment; filename={download_name}"
+    else:
+        report_data = {
+            "session_id": session.session_id,
+            "original_filename": session.original_filename,
+            "size": session.size,
+            "cleaned_size": session.cleaned_size,
+            "size_delta": session.size_delta,
+            "size_delta_pct": session.size_delta_pct,
+            "detected_kind": session.detected_kind,
+            "suspicious": session.suspicious,
+            "verification_status": session.verification_status,
+            "status_reason": session.status_reason,
+            "missing_tools": session.missing_tools,
+            "verified_clean": session.verified_clean,
+            "normalized_findings": session.normalized_findings,
+            "score": session.score,
+            "cleaning_outcome_state": session.cleaning_outcome_state,
+            "inspect_report": session.inspect_report,
+            "clean_report": session.clean_report,
+            "post_clean_inspect": session.post_clean_inspect,
+        }
+        json_content = json.dumps(report_data, indent=2, ensure_ascii=False).encode("utf-8")
+        response = make_response(json_content, 200)
+        response.headers["Content-Type"] = "application/json; charset=utf-8"
+        download_name = f"traceclean_report_{Path(session.original_filename).stem}.json"
+        response.headers["Content-Disposition"] = f"attachment; filename={download_name}"
 
-    download_name = f"traceclean_report_{Path(session.original_filename).stem}.json"
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@app.route("/session/<session_id>/download/zip", methods=["GET"])
+def download_session_zip(session_id: str) -> Response:
+    """Safely download ZIP archive containing cleaned file, JSON report, and HTML report."""
+    session = FileSession.get(session_id)
+    if session is None:
+        return make_response(render_template("error.html", error="Session missing or expired."), 440)
+
+    try:
+        zip_bytes = build_single_session_zip(session)
+    except Exception as e:
+        return make_response(render_template("error.html", error=f"Failed to generate ZIP archive: {e}"), 500)
+
+    buf = io.BytesIO(zip_bytes)
+    download_name = f"traceclean_archive_{Path(session.original_filename).stem}.zip"
     response = send_file(
         buf,
         as_attachment=True,
         download_name=download_name,
-        mimetype="application/json",
+        mimetype="application/zip",
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -264,7 +345,74 @@ def process_batch() -> Response | str:
         return render_template("error.html", error="No valid files selected."), 400
 
     batch_res = run_batch_scan(file_tuples)
+
+    # Save batch scan results to SQLite so they can be viewed/exported later and appear in history
+    for item in batch_res.items:
+        try:
+            findings = [Finding.from_dict(f) for f in item["findings"]]
+            score_obj = ProvenanceScore(**item["score"])
+            scan_res = ProvenanceScanResult(
+                scan_id=item["scan_id"],
+                original_filename=item["original_filename"],
+                kind=item["kind"],
+                size=item["size"],
+                created_at=item["created_at"],
+                verification_status=item["verification_status"],
+                verified_clean=item["verified_clean"],
+                missing_tools=item["missing_tools"],
+                status_reason=item["status_reason"],
+                findings=findings,
+                score=score_obj,
+                raw_report=item["raw_report"],
+            )
+            file_bytes = None
+            for fname, fbytes in file_tuples:
+                if fname == item["original_filename"]:
+                    file_bytes = fbytes
+                    break
+            save_db_scan(scan_res, file_bytes=file_bytes)
+        except Exception:
+            pass
+
+    # Save aggregate ZIP bytes to a temporary directory in SESSION_BASE_DIR
+    from session import SESSION_BASE_DIR
+    try:
+        zip_bytes = build_batch_zip(batch_res)
+        batch_dir = SESSION_BASE_DIR / batch_res.batch_id
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        (batch_dir / "batch.zip").write_bytes(zip_bytes)
+        
+        # Write metadata so Janitor cleans it up
+        meta = {
+            "session_id": batch_res.batch_id,
+            "created_at": time.time(),
+            "expires_at": time.time() + 3600,
+        }
+        (batch_dir / "session.json").write_text(json.dumps(meta), encoding="utf-8")
+    except Exception:
+        pass
+
     return make_response(json.dumps(batch_res.to_dict(), indent=2, ensure_ascii=False), 200, {"Content-Type": "application/json"})
+
+
+@app.route("/batch/download/zip/<batch_id>", methods=["GET"])
+def download_batch_zip(batch_id: str) -> Response:
+    """Safely download ZIP archive containing batch inspection reports."""
+    from session import SESSION_BASE_DIR
+    safe_id = "".join(c for c in batch_id if c.isalnum() or c in ("-", "_"))
+    zip_path = SESSION_BASE_DIR / safe_id / "batch.zip"
+    if not zip_path.exists():
+        return make_response(render_template("error.html", error="Batch ZIP archive not found or expired."), 404)
+
+    response = send_file(
+        zip_path,
+        as_attachment=True,
+        download_name=f"traceclean_batch_{safe_id}.zip",
+        mimetype="application/zip",
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @app.route("/history", methods=["GET"])
@@ -275,6 +423,24 @@ def history_page() -> str:
     except Exception:
         scans = []
     return render_template("history.html", scans=scans)
+
+
+@app.route("/history/view/<scan_id>", methods=["GET"])
+def view_historical_scan(scan_id: str) -> Response | str:
+    """Render a read-only inspection dashboard for historical scans from SQLite."""
+    scan = get_db_scan(scan_id)
+    if scan is None:
+        return render_template("error.html", error="Scan history record not found."), 404
+    return render_template("inspect_history.html", scan=scan)
+
+
+@app.route("/history/delete/<scan_id>", methods=["POST"])
+def delete_historical_scan(scan_id: str) -> Response | str:
+    """Delete a historical scan record from SQLite database."""
+    success = delete_db_scan(scan_id)
+    if not success:
+        return render_template("error.html", error="Could not delete scan record."), 400
+    return redirect(url_for("history_page"))
 
 
 @app.route("/api/v1/scan", methods=["POST"])

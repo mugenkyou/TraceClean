@@ -170,15 +170,6 @@
         <span>Format: <strong style="color: #fff;">{{ session.detected_kind|upper }}</strong></span>
         <span>&bull;</span>
         <span>Size: <strong style="color: #fff;">{{ (session.size / 1024)|round(1) }} KB</strong></span>
-        <span>&bull;</span>
-        <span>Command-Line Tools: 
-          {% set all_tools = ['c2patool', 'exiftool', 'qpdf'] %}
-          {% for t in all_tools %}
-            <span style="font-family: var(--font-mono); font-size: 0.75rem; padding: 0.1rem 0.3rem; border-radius: 3px; background: {% if t in session.missing_tools %}rgba(239, 68, 68, 0.15); color: var(--status-danger);{% else %}rgba(16, 185, 129, 0.15); color: var(--status-clean);{% endif %};">
-              {{ t }}
-            </span>
-          {% endfor %}
-        </span>
       </div>
     </div>
 
@@ -202,9 +193,45 @@
     </div>
   </div>
 
+  <!-- Privacy Assurance & Verification Coverage Matrix -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 0.5rem;">
+    <!-- 100% Local Processing Assurance -->
+    <div class="privacy-assurance-card" style="margin-bottom: 0;">
+      <div class="lock-icon">🔒</div>
+      <div>
+        <h3 style="font-size: 0.9rem; font-family: var(--font-heading); color: var(--status-clean); margin: 0; font-weight: 700;">
+          Secure Local Processing
+        </h3>
+        <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem; line-height: 1.4;">
+          All operations run entirely in-memory and on-process. Your file bytes, metadata, and extracted findings are never sent to external servers or API clouds.
+        </p>
+      </div>
+    </div>
+
+    <!-- Verification Coverage Matrix -->
+    <div class="verification-coverage-matrix" style="margin-bottom: 0;">
+      <div class="verification-card {% if 'c2patool' in session.missing_tools %}missing{% else %}active{% endif %}">
+        <span style="font-size: 0.75rem; font-family: var(--font-mono); color: #fff;">c2patool (C2PA)</span>
+        <span class="verif-light {% if 'c2patool' in session.missing_tools %}amber{% else %}green{% endif %}"></span>
+      </div>
+      <div class="verification-card {% if 'exiftool' in session.missing_tools %}missing{% else %}active{% endif %}">
+        <span style="font-size: 0.75rem; font-family: var(--font-mono); color: #fff;">exiftool (EXIF)</span>
+        <span class="verif-light {% if 'exiftool' in session.missing_tools %}amber{% else %}green{% endif %}"></span>
+      </div>
+      <div class="verification-card {% if 'qpdf' in session.missing_tools %}missing{% else %}active{% endif %}">
+        <span style="font-size: 0.75rem; font-family: var(--font-mono); color: #fff;">qpdf (PDF)</span>
+        <span class="verif-light {% if 'qpdf' in session.missing_tools %}amber{% else %}green{% endif %}"></span>
+      </div>
+      <div class="verification-card active">
+        <span style="font-size: 0.75rem; font-family: var(--font-mono); color: #fff;">stylometry (Text)</span>
+        <span class="verif-light green"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- Missing Tools / Degraded Capabilities Warning Banner -->
   {% if session.missing_tools %}
-    <div class="warning-banner" style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 1.25rem 1.75rem; border-radius: var(--radius-md); margin-bottom: 2rem; display: flex; align-items: flex-start; gap: 1rem; color: var(--status-warn);">
+    <div class="warning-banner" style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); padding: 1.25rem 1.75rem; border-radius: var(--radius-md); display: flex; align-items: flex-start; gap: 1rem; color: var(--status-warn);">
       <div style="font-size: 1.5rem; line-height: 1;">⚠️</div>
       <div>
         <strong style="color: #fff;">Degraded Capability Notice:</strong>
@@ -278,7 +305,8 @@
     <div class="explorer-sidebar">
       <!-- Search/Filters Area -->
       <div style="padding: 1rem; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 0.5rem;">
-        <div style="font-size: 0.75rem; text-transform: uppercase; font-weight: 600; color: var(--text-muted);">Filter Findings</div>
+        <div style="font-size: 0.75rem; text-transform: uppercase; font-weight: 600; color: var(--text-muted);">Search &amp; Filter Findings</div>
+        <input type="text" id="finding-search" class="filter-search-input" placeholder="Search signals (e.g. C2PA, U+200B)..." style="margin-bottom: 0.25rem;">
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
           <select id="category-filter" class="filter-select">
             <option value="all">Category: All</option>
@@ -373,6 +401,58 @@
     </form>
   </div>
 
+  <!-- "What does this mean?" Forensic Help Section -->
+  <div class="help-accordion" style="margin-bottom: 2rem;">
+    <div class="help-section-title">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-cyan); vertical-align: middle;">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+        <line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span style="margin-left: 0.5rem;">What does this mean? Forensic Guide</span>
+    </div>
+    
+    <div class="help-item">
+      <button type="button" class="help-trigger" onclick="toggleHelpItem('help-c2pa')">
+        <span>C2PA &amp; Content Credentials</span>
+        <span class="help-icon">▼</span>
+      </button>
+      <div id="help-c2pa" class="help-content">
+        C2PA (Coalition for Content Provenance and Authenticity) is an open industry standard that embeds cryptographic assertions directly inside images and documents. These "Content Credentials" record the history and origin of a file (e.g., the camera model, editing software, or generative AI model used). While meant for accountability, they leak sensitive workflow, software, and device history. TraceClean strips these JUMBF container boxes and signature manifests.
+      </div>
+    </div>
+    
+    <div class="help-item">
+      <button type="button" class="help-trigger" onclick="toggleHelpItem('help-metadata')">
+        <span>Container Metadata (EXIF, XMP, XML)</span>
+        <span class="help-icon">▼</span>
+      </button>
+      <div id="help-metadata" class="help-content">
+        Image and document containers (like JPEG, WebP, PDF, or DOCX) store structural properties detailing device IDs, editing prompts, geolocation coords, author names, and timestamps. Generative AI tools often inject tags (like <code>Software: Midjourney</code> or <code>DigitalSourceType: TrainedAlgorithmicRepresentation</code>) into XMP and EXIF structures. TraceClean targets and deletes these tags while leaving the main visual or structural data intact.
+      </div>
+    </div>
+    
+    <div class="help-item">
+      <button type="button" class="help-trigger" onclick="toggleHelpItem('help-invisible-text')">
+        <span>Invisible Text (Layer A Unicode Steganography)</span>
+        <span class="help-icon">▼</span>
+      </button>
+      <div id="help-invisible-text" class="help-content">
+        Invisible steganography exploits hidden Unicode characters (such as zero-width spaces <code>U+200B</code>, tag characters <code>U+E0020</code>, and variations selectors) to silently encode tracking payloads and corporate watermarks inside plain text. The text looks completely normal to the human eye, but copy-pasting it retains these binary carrier signatures. TraceClean detects and normalizes these characters to standard Unicode representations.
+      </div>
+    </div>
+    
+    <div class="help-item">
+      <button type="button" class="help-trigger" onclick="toggleHelpItem('help-stylometry')">
+        <span>Stylometry &amp; Prose Patterns</span>
+        <span class="help-icon">▼</span>
+      </button>
+      <div id="help-stylometry" class="help-content">
+        Stylometry is the statistical analysis of literary style. Generative AI models write with predictable linguistic patterns, word distributions, and structural repetitions. Our engine evaluates these statistical markers to assign a likelihood score of machine authorship. Unlike physical watermarks, stylometric patterns cannot be stripped automatically without rewriting the text.
+      </div>
+    </div>
+  </div>
+
   <!-- Technical Raw JSON Details Toggle -->
   <div style="text-align: center; margin-bottom: 2rem;">
     <button type="button" class="details-toggle" data-target="json-details" style="background: transparent; border: none; color: var(--text-dim); text-decoration: underline; font-size: 0.8rem; cursor: pointer; padding: 0.5rem;">
@@ -412,6 +492,7 @@
   const detailPanel = document.getElementById('explorer-detail-view');
   const catFilter = document.getElementById('category-filter');
   const sevFilter = document.getElementById('severity-filter');
+  const searchInput = document.getElementById('finding-search');
 
   let selectedIndex = null;
 
@@ -419,14 +500,24 @@
     listContainer.innerHTML = '';
     const filterCat = catFilter.value;
     const filterSev = sevFilter.value;
+    const query = searchInput.value.toLowerCase().trim();
 
     findings.forEach((f, idx) => {
-      // Apply filters
+      // Apply category/severity filters
       if (filterCat !== 'all') {
         if (filterCat === 'metadata' && f.category !== 'image_metadata' && f.category !== 'document_metadata') return;
         if (filterCat !== 'metadata' && f.category !== filterCat) return;
       }
       if (filterSev !== 'all' && f.severity !== filterSev) return;
+
+      // Apply search query filter
+      if (query) {
+        const matchesSignal = f.signal.toLowerCase().includes(query);
+        const matchesCat = f.category.toLowerCase().includes(query);
+        const matchesLoc = f.location.toLowerCase().includes(query);
+        const matchesEv = JSON.stringify(f.evidence).toLowerCase().includes(query);
+        if (!matchesSignal && !matchesCat && !matchesLoc && !matchesEv) return;
+      }
 
       const row = document.createElement('div');
       row.className = `finding-row ${selectedIndex === idx ? 'active' : ''}`;
@@ -451,51 +542,93 @@
   }
 
   function renderDetail(f) {
+    const evidenceStr = JSON.stringify(f.evidence, null, 2);
     detailPanel.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--border-subtle); padding-bottom: 1rem; margin-bottom: 1.25rem;">
         <div>
           <div style="font-size: 0.75rem; text-transform: uppercase; color: var(--accent-cyan); font-weight: 600; letter-spacing: 0.05em;">Forensic Artifact Details</div>
-          <h2 style="font-family: var(--font-heading); font-size: 1.35rem; color: #fff; margin-top: 0.25rem;">${f.signal}</h2>
+          <h2 style="font-family: var(--font-heading); font-size: 1.35rem; color: #fff; margin-top: 0.25rem; font-family: var(--font-mono);">${f.signal}</h2>
         </div>
-        <div style="display: flex; gap: 0.5rem;">
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
           <span class="confidence-pill ${f.confidence}">${f.confidence}</span>
-          <span style="font-size: 0.75rem; background: ${f.severity === 'critical' ? 'var(--status-danger-bg)' : 'rgba(255,255,255,0.05)'}; color: ${f.severity === 'critical' ? 'var(--status-danger)' : '#fff'}; padding: 0.2rem 0.5rem; border-radius: 4px; text-transform: uppercase; font-weight: 600;">
+          <span style="font-size: 0.75rem; background: ${f.severity === 'critical' ? 'var(--status-danger-bg)' : 'rgba(255,255,255,0.05)'}; color: ${f.severity === 'critical' ? 'var(--status-danger)' : '#fff'}; padding: 0.2rem 0.5rem; border-radius: 4px; text-transform: uppercase; font-weight: 600; border: 1px solid rgba(255,255,255,0.1);">
             ${f.severity}
           </span>
         </div>
       </div>
 
-      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
-        <div>
-          <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Location</div>
-          <code style="display: block; margin-top: 0.25rem; font-size: 0.85rem; color: #fff; background: rgba(0,0,0,0.2); padding: 0.25rem 0.5rem; border-radius: 4px;">${f.location}</code>
+      <div class="finding-detail-grid">
+        <div class="finding-detail-item">
+          <span class="finding-detail-label">Location</span>
+          <span class="finding-detail-val" style="font-family: var(--font-mono); word-break: break-all;">${f.location}</span>
         </div>
-        <div>
-          <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Removable Status</div>
-          <span style="display: inline-block; margin-top: 0.25rem; font-size: 0.85rem; font-weight: 600; color: ${f.removable ? 'var(--status-clean)' : 'var(--text-dim)'};">
-            ${f.removable ? 'Yes (Scrubable)' : 'No (Requires rewriting)'}
+        <div class="finding-detail-item">
+          <span class="finding-detail-label">Removable Status</span>
+          <span class="finding-detail-val" style="color: ${f.removable ? 'var(--status-clean)' : 'var(--status-warn)'}; font-weight: 600;">
+            ${f.removable ? '✓ Yes (Scrubable)' : '✗ No (Requires rewriting)'}
           </span>
         </div>
       </div>
 
       <div style="margin-bottom: 1.5rem;">
-        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.35rem;">Plain-Language Explanation</div>
-        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5;">
+        <div class="finding-detail-label" style="margin-bottom: 0.35rem;">Plain-Language Explanation</div>
+        <p style="font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; background: rgba(255,255,255,0.01); border: 1px solid var(--border-subtle); padding: 0.75rem; border-radius: 4px;">
           ${getExplanation(f.signal)}
         </p>
       </div>
 
       <div style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
-        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 0.35rem;">Technical Evidence Payload</div>
-        <div style="flex: 1; background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; font-family: var(--font-mono); font-size: 0.75rem; overflow-y: auto; color: var(--accent-cyan); max-height: 220px;">
-          <pre style="margin: 0; white-space: pre-wrap;">${JSON.stringify(f.evidence, null, 2)}</pre>
+        <div class="evidence-header">
+          <span class="finding-detail-label">Technical Evidence Payload</span>
+          <button class="btn-copy" onclick="copyEvidenceToClipboard()">Copy JSON</button>
+        </div>
+        <div style="flex: 1; background: rgba(0,0,0,0.4); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 1rem; font-family: var(--font-mono); font-size: 0.75rem; overflow-y: auto; color: var(--accent-cyan); max-height: 220px; text-align: left;">
+          <pre id="evidence-pre" style="margin: 0; white-space: pre-wrap;">${evidenceStr}</pre>
         </div>
       </div>
     `;
   }
 
+  // Search/Filters Events
   catFilter.addEventListener('change', renderList);
   sevFilter.addEventListener('change', renderList);
+  searchInput.addEventListener('input', renderList);
+
+  // Help Accordion Toggle Function
+  function toggleHelpItem(id) {
+    const content = document.getElementById(id);
+    if (!content) return;
+    const trigger = content.previousElementSibling;
+    const icon = trigger.querySelector('.help-icon');
+    const isHidden = content.style.display === 'none' || !content.style.display;
+    
+    // Close other help contents
+    document.querySelectorAll('.help-content').forEach(c => {
+      if (c.id !== id) {
+        c.style.display = 'none';
+        c.previousElementSibling.querySelector('.help-icon').textContent = '▼';
+      }
+    });
+
+    content.style.display = isHidden ? 'block' : 'none';
+    icon.textContent = isHidden ? '▲' : '▼';
+  }
+
+  // Copy Evidence to Clipboard
+  function copyEvidenceToClipboard() {
+    const pre = document.getElementById('evidence-pre');
+    if (!pre) return;
+    navigator.clipboard.writeText(pre.textContent).then(() => {
+      const btn = document.querySelector('.btn-copy');
+      if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = originalText, 1500);
+      }
+    }).catch(err => {
+      console.error('Copy evidence failed: ', err);
+    });
+  }
 
   // Initialize
   renderList();

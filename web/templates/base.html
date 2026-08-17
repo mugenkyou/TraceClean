@@ -32,21 +32,32 @@
 
   <!-- Capabilities Status Bar -->
   {% if capabilities %}
-  <div class="capabilities-bar">
-    <div class="container capabilities-content">
-      <div><strong>Server Engine:</strong> v{{ capabilities.version }}</div>
-      <div class="capability-tags">
-        <span class="cap-tag {% if capabilities.tools.c2patool %}active{% else %}inactive{% endif %}">
-          c2patool {% if capabilities.tools.c2patool %}✓{% else %}✗{% endif %}
+  <div class="capabilities-bar" style="background: rgba(15, 20, 32, 0.6); padding: 0.6rem 0;">
+    <div class="container capabilities-content" style="display: flex; align-items: center; justify-content: space-between; font-size: 0.8rem;">
+      <div style="display: flex; align-items: center; gap: 0.5rem; color: var(--text-dim);">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-cyan); vertical-align: middle;">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span>Forensic Engine: <strong style="color: #fff; font-family: var(--font-mono);">v{{ capabilities.version }}</strong></span>
+      </div>
+      <div class="capability-tags" style="display: flex; gap: 0.75rem; align-items: center;">
+        <span style="color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; margin-right: 0.25rem;">Verification Modules:</span>
+        <span class="cap-tag active" style="display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.75rem; color: #fff;">
+          <span class="verif-light {% if capabilities.tools.c2patool %}green{% else %}amber{% endif %}" style="width:6px; height:6px;"></span>
+          c2patool
         </span>
-        <span class="cap-tag {% if capabilities.tools.exiftool %}active{% else %}inactive{% endif %}">
-          exiftool {% if capabilities.tools.exiftool %}✓{% else %}✗{% endif %}
+        <span class="cap-tag active" style="display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.75rem; color: #fff;">
+          <span class="verif-light {% if capabilities.tools.exiftool %}green{% else %}amber{% endif %}" style="width:6px; height:6px;"></span>
+          exiftool
         </span>
-        <span class="cap-tag {% if capabilities.tools.qpdf %}active{% else %}inactive{% endif %}">
-          qpdf {% if capabilities.tools.qpdf %}✓{% else %}✗{% endif %}
+        <span class="cap-tag active" style="display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.75rem; color: #fff;">
+          <span class="verif-light {% if capabilities.tools.qpdf %}green{% else %}amber{% endif %}" style="width:6px; height:6px;"></span>
+          qpdf
         </span>
-        <span class="cap-tag active">
-          Stylometry ✓
+        <span class="cap-tag active" style="display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); font-size: 0.75rem; color: #fff;">
+          <span class="verif-light green" style="width:6px; height:6px;"></span>
+          stylometry
         </span>
       </div>
     </div>

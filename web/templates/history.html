@@ -17,7 +17,7 @@
     <div style="overflow-x: auto;">
       <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
         <thead>
-          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left;">
+          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left; border-bottom: 1px solid var(--border-subtle);">
             <th style="padding: 0.75rem;">Scan ID</th>
             <th style="padding: 0.75rem;">Filename</th>
             <th style="padding: 0.75rem;">Kind</th>
@@ -25,7 +25,7 @@
             <th style="padding: 0.75rem;">Status</th>
             <th style="padding: 0.75rem;">Exposure Score</th>
             <th style="padding: 0.75rem;">Findings</th>
-            <th style="padding: 0.75rem;">Export Report</th>
+            <th style="padding: 0.75rem; text-align: right;">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -33,19 +33,30 @@
             <tr style="border-bottom: 1px solid var(--border-subtle);">
               <td style="padding: 0.75rem; font-family: var(--font-mono); color: var(--accent-cyan);">{{ scan.scan_id }}</td>
               <td style="padding: 0.75rem;"><strong>{{ scan.original_filename }}</strong></td>
-              <td style="padding: 0.75rem;">{{ scan.kind }}</td>
+              <td style="padding: 0.75rem; text-transform: uppercase; font-size: 0.75rem;">{{ scan.kind }}</td>
               <td style="padding: 0.75rem;">{{ (scan.size / 1024)|round(1) }} KB</td>
               <td style="padding: 0.75rem;">
-                <span class="badge" style="background: {% if scan.verification_status == 'detected' %}rgba(239, 68, 68, 0.2){% elif scan.verification_status == 'not_detected' %}rgba(16, 185, 129, 0.2){% else %}rgba(245, 158, 11, 0.2){% endif %};">
-                  {{ scan.verification_status }}
-                </span>
+                {% if scan.verification_status == 'detected' %}
+                  <span class="badge" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(239, 68, 68, 0.2);">Compromised</span>
+                {% elif scan.verification_status == 'not_detected' %}
+                  <span class="badge" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.2);">Clean</span>
+                {% else %}
+                  <span class="badge" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.2);">Inconclusive</span>
+                {% endif %}
               </td>
-              <td style="padding: 0.75rem; font-weight: 700;">
+              <td style="padding: 0.75rem; font-weight: 700; font-family: var(--font-mono);">
                 {% if scan.score is not none %}{{ scan.score }}{% else %}N/A{% endif %}
               </td>
-              <td style="padding: 0.75rem;">{{ scan.finding_count }}</td>
-              <td style="padding: 0.75rem;">
-                <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='html') }}" target="_blank" style="color: var(--accent-cyan); font-size: 0.8rem; text-decoration: none;">HTML Report &rarr;</a>
+              <td style="padding: 0.75rem; font-family: var(--font-mono);">{{ scan.finding_count }}</td>
+              <td style="padding: 0.75rem; text-align: right;">
+                <div style="display: flex; gap: 0.4rem; justify-content: flex-end; align-items: center;">
+                  <a href="{{ url_for('view_historical_scan', scan_id=scan.scan_id) }}" class="history-btn">Open Audit</a>
+                  <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='html') }}" target="_blank" class="history-btn">HTML</a>
+                  <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='json') }}" target="_blank" class="history-btn">JSON</a>
+                  <form action="{{ url_for('delete_historical_scan', scan_id=scan.scan_id) }}" method="POST" style="display: inline-block; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this scan record?');">
+                    <button type="submit" class="history-btn delete" style="line-height: inherit;">Delete</button>
+                  </form>
+                </div>
               </td>
             </tr>
           {% endfor %}
