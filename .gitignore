@@ -42,3 +42,33 @@ contenttrace.db-journal
 posts.md
 *.cleaned.*
 *.bak
+
+# ── AI Watermark Lab: exclude all generated experiment artifacts ──────────────
+# Temp watermarked text/image outputs written during experiments
+experiments/
+*.wm.txt
+*.wm.png
+service/scripts/temp_before_*.png
+service/scripts/temp_after_*.png
+service/scripts/temp_after_detect_*.png
+
+# External harness checkouts (users clone these separately)
+MarkLLM/
+reverse-SynthID/
+noai-watermark/
+CtrlRegen/
+
+# Hugging Face model/tokenizer caches
+.cache/huggingface/
+huggingface_cache/
+
+# PyTorch and other framework caches
+.cache/torch/
+*.safetensors
+*.bin
+*.pt
+*.pth
+
+# Lab scratch and setup logs
+lab_setup_*.log
+setup_markllm*.log

@@ -45,6 +45,9 @@ from provenance.experiments import (
     validate_config,
     run_pipeline,
     get_harness_status,
+    _validate_config_dict,
+    cancel_run,
+    _SubprocessError,
 )
 from web.app import app
 
@@ -496,3 +499,177 @@ def test_report_rendering_and_status_routes(temp_db):
     assert res.status_code == 200
     assert b"ML Dependencies" in res.data
 
+
+# =====================================================================
+# Phase 3 Reliability Regression Tests
+# =====================================================================
+
+class TestConfigDictValidation:
+    """Tests for _validate_config_dict — must produce human-readable errors not KeyErrors."""
+
+    def test_empty_dict_raises_missing_experiment(self):
+        with pytest.raises(ValueError, match="Missing required field: experiment"):
+            _validate_config_dict({})
+
+    def test_missing_input_raises_clear_error(self):
+        with pytest.raises(ValueError, match="Missing required field: input"):
+            _validate_config_dict({
+                "experiment": {"name": "x"},
+                "watermark": {"family": "text", "method": "kgw"},
+                "attack": {"method": "rewrite"},
+            })
+
+    def test_missing_input_content_raises_clear_error(self):
+        with pytest.raises(ValueError, match="input.content or input.path"):
+            _validate_config_dict({
+                "experiment": {"name": "x"},
+                "input": {"type": "prompt"},   # type present but no content or path
+                "watermark": {"family": "text", "method": "kgw"},
+                "attack": {"method": "rewrite"},
+            })
+
+    def test_invalid_input_type_raises_clear_error(self):
+        with pytest.raises(ValueError, match="must be 'prompt', 'text', or 'image'"):
+            _validate_config_dict({
+                "experiment": {"name": "x"},
+                "input": {"type": "video", "content": "hi"},
+                "watermark": {"family": "text", "method": "kgw"},
+                "attack": {"method": "rewrite"},
+            })
+
+    def test_missing_watermark_family_raises_clear_error(self):
+        with pytest.raises(ValueError, match="watermark.family"):
+            _validate_config_dict({
+                "experiment": {"name": "x"},
+                "input": {"type": "prompt", "content": "hi"},
+                "watermark": {"method": "kgw"},   # family missing
+                "attack": {"method": "rewrite"},
+            })
+
+    def test_valid_config_passes(self):
+        # Should not raise
+        _validate_config_dict({
+            "experiment": {"name": "x"},
+            "input": {"type": "prompt", "content": "Some prompt text."},
+            "watermark": {"family": "text", "method": "kgw"},
+            "attack": {"method": "rewrite", "parameters": {"backend": "print-prompt"}},
+        })
+
+
+def test_run_pipeline_empty_config_fails_cleanly():
+    """run_pipeline with {} must fail with a Configuration error, not a raw KeyError."""
+    run_id = f"test-empty-config-{int(time.time())}"
+    exp_id = f"exp-empty-{int(time.time())}"
+    from provenance.db import save_experiment, get_experiment_run
+    save_experiment(exp_id, "Empty Config Test", "{}", time.time())
+    run_pipeline(run_id, exp_id, {})
+    run = get_experiment_run(run_id)
+    assert run["status"] == "failed"
+    assert run["error"] is not None
+    assert "Configuration error" in run["error"], (
+        f"Expected 'Configuration error' in error, got: {run['error']!r}"
+    )
+    assert run["current_stage"] == "Failed"
+
+
+def test_run_pipeline_missing_input_fails_cleanly():
+    """run_pipeline with config missing 'input' must fail with human-readable error."""
+    run_id = f"test-no-input-{int(time.time())}"
+    exp_id = f"exp-no-input-{int(time.time())}"
+    config_no_input = {
+        "experiment": {"name": "No Input Test"},
+        "watermark": {"family": "text", "method": "kgw"},
+        "attack": {"method": "rewrite"},
+    }
+    from provenance.db import save_experiment, get_experiment_run
+    save_experiment(exp_id, "No Input", json.dumps(config_no_input), time.time())
+    run_pipeline(run_id, exp_id, config_no_input)
+    run = get_experiment_run(run_id)
+    assert run["status"] == "failed"
+    assert "Missing required field: input" in run["error"]
+
+
+def test_subprocess_error_diagnostic_block():
+    """_SubprocessError.diagnostic_block() should include returncode and stderr."""
+    err = _SubprocessError(
+        "Subprocess exited with code 1: python.exe",
+        returncode=1,
+        stderr="Traceback (most recent call last):\n  File ...: in <module>\nRuntimeError: bad",
+    )
+    block = err.diagnostic_block()
+    assert "Return code: 1" in block
+    assert "RuntimeError: bad" in block
+
+
+def test_progress_endpoint_null_coercion(temp_db):
+    """Progress endpoint must return numeric percentage even when DB columns are NULL."""
+    from provenance.db import save_experiment, save_experiment_run
+    save_experiment("exp-null-prog", "Null Progress", "{}", time.time())
+    save_experiment_run(
+        run_id="run-null-prog",
+        experiment_id="exp-null-prog",
+        started_at=time.time(),
+        finished_at=time.time() + 10,
+        status="completed",
+        device="cpu",
+        input_hash=None,
+        configuration_hash="abc123",
+        error=None,
+        reproducibility_json="{}",
+        # Intentionally omit current_stage/stage_percentage/stage_status
+    )
+    app.config["TESTING"] = True
+    client = app.test_client()
+    res = client.get("/lab/run/run-null-prog/progress")
+    assert res.status_code == 200
+    data = json.loads(res.data)
+    # Must never return None for stage_percentage
+    assert data["stage_percentage"] is not None
+    assert isinstance(data["stage_percentage"], int)
+    assert data["current_stage"] is not None
+
+
+def test_health_check_route():
+    """Health check endpoint must return JSON with 'overall' key."""
+    app.config["TESTING"] = True
+    client = app.test_client()
+    res = client.get("/lab/health")
+    assert res.status_code == 200
+    assert res.content_type.startswith("application/json")
+    data = json.loads(res.data)
+    assert "overall" in data
+    assert "checks" in data
+    assert "database" in data["checks"]
+    assert "environment" in data["checks"]
+
+
+def test_cancel_route_for_nonexistent_run():
+    """Cancel on a run that doesn't exist returns 404."""
+    app.config["TESTING"] = True
+    client = app.test_client()
+    res = client.post("/lab/run/nonexistent-run-xyz/cancel")
+    assert res.status_code == 404
+
+
+def test_cancel_route_for_completed_run():
+    """Cancel on an already-completed run returns 400 (not cancellable)."""
+    from provenance.db import save_experiment, save_experiment_run
+    save_experiment("exp-done", "Done Exp", "{}", time.time())
+    save_experiment_run(
+        run_id="run-done-cancel",
+        experiment_id="exp-done",
+        started_at=time.time(),
+        finished_at=time.time() + 5,
+        status="completed",
+        device="cpu",
+        input_hash=None,
+        configuration_hash="xyz",
+        error=None,
+        reproducibility_json="{}",
+    )
+    app.config["TESTING"] = True
+    client = app.test_client()
+    res = client.post("/lab/run/run-done-cancel/cancel")
+    assert res.status_code == 400
+    data = json.loads(res.data)
+    assert "not cancellable" in data["error"]

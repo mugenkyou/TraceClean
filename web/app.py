@@ -61,7 +61,14 @@ from provenance.reports.html_report import generate_html_report
 from provenance.reports.json_report import generate_json_report
 from provenance.reports.zip_export import build_batch_zip
 from provenance.schema import Finding, ProvenanceScanResult, ProvenanceScore
-from provenance.experiments import validate_config, queue_experiment_run, get_active_run_futures, get_harness_status
+from provenance.experiments import (
+    validate_config,
+    queue_experiment_run,
+    cancel_run,
+    get_active_run_futures,
+    get_harness_status,
+    _validate_config_dict,
+)
 
 app = Flask(
     __name__,
@@ -732,21 +739,78 @@ def lab_run_progress(run_id: str) -> Response:
     run = get_experiment_run(run_id)
     if not run:
         return make_response(json.dumps({"error": "Not found"}), 404, {"Content-Type": "application/json"})
-    
+
     metrics = get_run_metrics(run_id)
+    # Coerce NULL progress fields (older rows before columns existed) to safe defaults
+    current_stage = run.get("current_stage") or ("Completed" if run["status"] == "completed" else "Unknown")
+    stage_percentage = run.get("stage_percentage")
+    if stage_percentage is None:
+        stage_percentage = 100 if run["status"] in ("completed", "failed") else 0
+    stage_status = run.get("stage_status") or ""
+
     return make_response(
         json.dumps({
             "status": run["status"],
             "error": run["error"],
             "finished_at": run["finished_at"],
-            "current_stage": run.get("current_stage"),
-            "stage_percentage": run.get("stage_percentage"),
-            "stage_status": run.get("stage_status"),
+            "current_stage": current_stage,
+            "stage_percentage": stage_percentage,
+            "stage_status": stage_status,
             "metrics": metrics,
         }),
         200,
         {"Content-Type": "application/json"},
     )
+
+
+@app.route("/lab/run/<run_id>/cancel", methods=["POST"])
+def lab_run_cancel(run_id: str) -> Response:
+    """Cancel an actively running experiment run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return make_response(json.dumps({"error": "Not found"}), 404, {"Content-Type": "application/json"})
+    if run["status"] not in ("running", "queued"):
+        return make_response(
+            json.dumps({"error": f"Run is {run['status']}, not cancellable."}),
+            400, {"Content-Type": "application/json"},
+        )
+    killed = cancel_run(run_id)
+    # Mark as cancelled in the database
+    save_experiment_run(
+        run_id=run_id,
+        experiment_id=run["experiment_id"],
+        started_at=run["started_at"],
+        finished_at=time.time(),
+        status="failed",
+        device=run["device"] or "auto",
+        input_hash=run["input_hash"],
+        configuration_hash=run["configuration_hash"],
+        error="Run was cancelled by user.",
+        reproducibility_json=run["reproducibility_json"] or "{}",
+        current_stage="Failed",
+        stage_percentage=100,
+        stage_status="Cancelled by user.",
+    )
+    return make_response(
+        json.dumps({"cancelled": True, "process_killed": killed}),
+        200, {"Content-Type": "application/json"},
+    )
+
+
+@app.route("/lab/run/<run_id>/retry", methods=["POST"])
+def lab_run_retry(run_id: str) -> Response | str:
+    """Create a new run from the same experiment config (preserves original run history)."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Run not found."), 404
+    exp = get_experiment(run["experiment_id"])
+    if not exp:
+        return render_template("error.html", error="Parent experiment not found."), 404
+
+    config = json.loads(exp["configuration_json"])
+    new_run_id = f"run-{uuid.uuid4().hex[:12]}"
+    queue_experiment_run(new_run_id, exp["id"], config)
+    return redirect(url_for("lab_run_detail", run_id=new_run_id))
 
 
 @app.route("/lab/run/<run_id>/delete", methods=["POST"])
@@ -842,6 +906,75 @@ def lab_run_report(run_id: str) -> Response | str:
         resp.headers["Content-Type"] = "application/json; charset=utf-8"
         resp.headers["Content-Disposition"] = f"attachment; filename=traceclean_lab_report_{run_id}.json"
         return resp
+
+
+@app.route("/lab/health", methods=["GET"])
+def lab_health() -> Response:
+    """Structured health-check for the Watermark Lab environment."""
+    import subprocess as _sp
+    checks: dict[str, Any] = {}
+
+    # 1. Database connectivity
+    try:
+        from provenance.db import get_connection, DB_PATH
+        conn = get_connection(DB_PATH)
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        checks["database"] = {"status": "ok", "path": str(DB_PATH)}
+    except Exception as exc:
+        checks["database"] = {"status": "error", "detail": str(exc)}
+
+    # 2. Env vars
+    env_vars = {
+        "MARKLLM_DIR": os.environ.get("MARKLLM_DIR"),
+        "REVERSE_SYNTHID_DIR": os.environ.get("REVERSE_SYNTHID_DIR"),
+        "NOAI_WATERMARK_DIR": os.environ.get("NOAI_WATERMARK_DIR"),
+    }
+    checks["environment"] = {
+        var: {
+            "set": val is not None,
+            "exists": Path(val).expanduser().is_dir() if val else False,
+            "value": val or "(not set)",
+        }
+        for var, val in env_vars.items()
+    }
+
+    # 3. MarkLLM executable
+    markllm_dir = os.environ.get("MARKLLM_DIR")
+    if markllm_dir:
+        from provenance.experiments import _get_python_executable, SCRIPTS_DIR as _SCRIPTS_DIR
+        py_exe = _get_python_executable(markllm_dir)
+        detect_script = str(_SCRIPTS_DIR / "detect_text_watermark.py")
+        try:
+            r = _sp.run([py_exe, detect_script, "--help"],
+                        capture_output=True, timeout=30, text=True)
+            checks["markllm_executable"] = {
+                "status": "ok" if r.returncode == 0 else "error",
+                "returncode": r.returncode,
+                "python": py_exe,
+            }
+        except Exception as exc:
+            checks["markllm_executable"] = {"status": "error", "detail": str(exc)}
+    else:
+        checks["markllm_executable"] = {"status": "not_configured"}
+
+    # 4. Harness status
+    try:
+        checks["harness_status"] = get_harness_status()
+    except Exception as exc:
+        checks["harness_status"] = {"error": str(exc)}
+
+    overall = "ok" if all(
+        v.get("status") in ("ok", "not_configured", None)
+        for v in checks.values()
+        if isinstance(v, dict)
+    ) else "degraded"
+
+    return make_response(
+        json.dumps({"overall": overall, "checks": checks}, indent=2),
+        200,
+        {"Content-Type": "application/json"},
+    )
 
 
 @app.errorhandler(413)

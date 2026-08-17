@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,8 @@ SCRIPTS_DIR = ROOT_DIR / "service" / "scripts"
 _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 # Keep track of active tasks in memory
 _active_runs: dict[str, concurrent.futures.Future] = {}
+# Track active subprocess PIDs so cancel can SIGTERM them
+_run_processes: dict[str, list[subprocess.Popen]] = {}
 
 
 # =====================================================================
@@ -133,30 +136,155 @@ def _get_python_executable(checkout_dir: str) -> str:
     return str(venv_py) if venv_py.is_file() else sys.executable
 
 
-def _run_subprocess(cmd: list[str], input_data: bytes | str | None = None, timeout: float = 180.0) -> str:
-    """Execute a subprocess command, returning stdout or raising a clear error."""
+def _build_subprocess_env() -> dict[str, str]:
+    """Build subprocess environment with harness paths explicitly injected.
+
+    Never rely on the parent shell having exported these. Flask may be started
+    from VS Code, a bare CMD prompt, or a service manager without the variables.
+    If the env var is set in the Flask process (e.g. via .env loading), copy it
+    explicitly into the child environment.
+    """
+    env = os.environ.copy()
+    # Normalise Windows path separators for robustness
+    for var in ("MARKLLM_DIR", "REVERSE_SYNTHID_DIR", "NOAI_WATERMARK_DIR", "MARKDIFFUSION_DIR"):
+        val = os.environ.get(var)
+        if val:
+            env[var] = str(Path(val).expanduser().resolve())
+    return env
+
+
+class _SubprocessError(RuntimeError):
+    """Subprocess failure with captured stdout/stderr for diagnostics."""
+    def __init__(self, message: str, returncode: int | None = None,
+                 stdout: str = "", stderr: str = ""):
+        super().__init__(message)
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+    def diagnostic_block(self) -> str:
+        parts = [str(self)]
+        if self.returncode is not None:
+            parts.append(f"Return code: {self.returncode}")
+        if self.stderr:
+            parts.append(f"stderr:\n{self.stderr[:4096]}")
+        if self.stdout:
+            parts.append(f"stdout:\n{self.stdout[:2048]}")
+        return "\n".join(parts)
+
+
+def _run_subprocess(
+    cmd: list[str],
+    input_data: bytes | str | None = None,
+    timeout: float = 300.0,
+    run_id: str | None = None,
+) -> str:
+    """Execute a subprocess command, returning stdout or raising _SubprocessError.
+
+    Explicitly injects harness environment variables so Flask-spawned subprocesses
+    receive the same configuration regardless of how Flask was launched.
+    Optionally registers the Popen object for cancel support.
+    """
     text_mode = isinstance(input_data, str)
+    env = _build_subprocess_env()
+    # Ensure UTF-8 output on Windows subprocesses
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+
     try:
-        r = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            input=input_data,
-            capture_output=True,
-            text=text_mode,
-            timeout=timeout,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
         )
-    except (OSError, subprocess.SubprocessError, TimeoutError) as e:
-        raise RuntimeError(f"Execution command failed: {e}")
+        if run_id is not None:
+            _run_processes.setdefault(run_id, []).append(proc)
+        try:
+            stdin_bytes = input_data.encode("utf-8") if text_mode else input_data
+            stdout_bytes, stderr_bytes = proc.communicate(input=stdin_bytes, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            raise _SubprocessError(
+                f"Subprocess timed out after {timeout:.0f}s: {cmd[0]}",
+                returncode=None,
+            )
+        finally:
+            if run_id is not None:
+                procs = _run_processes.get(run_id, [])
+                if proc in procs:
+                    procs.remove(proc)
+    except _SubprocessError:
+        raise
+    except (OSError, subprocess.SubprocessError) as e:
+        raise _SubprocessError(f"Failed to launch subprocess {cmd[0]}: {e}")
 
-    if r.returncode != 0:
-        err_msg = (r.stderr or "").strip()
-        raise RuntimeError(err_msg or f"Subprocess exited with status {r.returncode}")
-    
-    return r.stdout
+    stdout = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+    stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+
+    if proc.returncode != 0:
+        raise _SubprocessError(
+            f"Subprocess exited with code {proc.returncode}: {cmd[0]}",
+            returncode=proc.returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    return stdout
+
+
+def _validate_config_dict(config: Any) -> None:
+    """Validate a parsed experiment config dict with human-readable error messages.
+
+    Called by run_pipeline before touching any key so Python KeyErrors are never
+    surfaced raw to the UI.
+    """
+    if not isinstance(config, dict):
+        raise ValueError("Experiment configuration must be a dictionary.")
+
+    for section in ("experiment", "input", "watermark", "attack"):
+        if section not in config:
+            raise ValueError(f"Missing required field: {section}")
+
+    input_sec = config["input"]
+    if not isinstance(input_sec, dict):
+        raise ValueError("'input' must be a dictionary.")
+    if "type" not in input_sec:
+        raise ValueError("Missing required field: input.type (must be 'prompt', 'text', or 'image')")
+    if input_sec["type"] not in ("prompt", "text", "image"):
+        raise ValueError(f"input.type must be 'prompt', 'text', or 'image'; got: {input_sec['type']!r}")
+    if "content" not in input_sec and "path" not in input_sec:
+        raise ValueError("Missing required field: input.content or input.path")
+
+    wm_sec = config["watermark"]
+    if not isinstance(wm_sec, dict):
+        raise ValueError("'watermark' must be a dictionary.")
+    if "family" not in wm_sec:
+        raise ValueError("Missing required field: watermark.family (must be 'text' or 'image')")
+    if wm_sec["family"] not in ("text", "image"):
+        raise ValueError(f"watermark.family must be 'text' or 'image'; got: {wm_sec['family']!r}")
+    if not wm_sec.get("method"):
+        raise ValueError("Missing required field: watermark.method")
+
+    att_sec = config["attack"]
+    if not isinstance(att_sec, dict):
+        raise ValueError("'attack' must be a dictionary.")
+    if not att_sec.get("method"):
+        raise ValueError("Missing required field: attack.method")
 
 
 # =====================================================================
-# Orchesrator Pipelines
+# Orchestrator Pipelines
 # =====================================================================
+
+# Stage-aware timeouts (seconds). CPU model loading legitimately takes >3 min.
+_TIMEOUT_MODEL_LOAD = 600     # 10 min: first load may download/warm up cache
+_TIMEOUT_GENERATION = 300     # 5 min: LM generation
+_TIMEOUT_DETECTION = 180      # 3 min: scoring/detection
+_TIMEOUT_ATTACK = 300         # 5 min: rewrite/ctrlregen
+_TIMEOUT_QUALITY = 60         # 1 min: metric calculation
+
 
 def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> None:
     """Execute the watermark experiment pipeline end-to-end and persist metrics.
@@ -164,8 +292,31 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
     Runs within the background worker thread.
     """
     started_at = time.time()
-    
-    # Save running state
+
+    # --- Upfront config validation before touching any key ---
+    # This prevents raw Python KeyErrors like "'input'" from reaching the UI.
+    try:
+        _validate_config_dict(config)
+    except ValueError as exc:
+        # Config is broken: fail immediately with a clear human-readable message.
+        config_hash = hashlib.sha256(json.dumps(config).encode()).hexdigest()
+        save_experiment_run(
+            run_id=run_id,
+            experiment_id=experiment_id,
+            started_at=started_at,
+            finished_at=time.time(),
+            status="failed",
+            device="auto",
+            input_hash=None,
+            configuration_hash=config_hash,
+            error=f"Configuration error: {exc}",
+            reproducibility_json=json.dumps({}),
+            current_stage="Failed",
+            stage_percentage=100,
+            stage_status=f"Configuration error: {exc}",
+        )
+        return
+
     config_json = json.dumps(config)
     config_hash = hashlib.sha256(config_json.encode("utf-8")).hexdigest()
     
@@ -250,6 +401,11 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
 
     except Exception as e:
         finished_at = time.time()
+        # Build a diagnostically useful error string
+        if isinstance(e, _SubprocessError):
+            error_msg = e.diagnostic_block()
+        else:
+            error_msg = str(e)
         # Update run as failed
         save_experiment_run(
             run_id=run_id,
@@ -260,108 +416,132 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
             device=config.get("watermark", {}).get("parameters", {}).get("device", "auto"),
             input_hash=None,
             configuration_hash=config_hash,
-            error=str(e),
+            error=error_msg,
             reproducibility_json=json.dumps(reproducibility),
             current_stage="Failed",
             stage_percentage=100,
-            stage_status=f"Stage execution error: {str(e)}"
+            stage_status=f"Stage execution error: {error_msg[:200]}"
         )
+    finally:
+        # Clean up any lingering process references for this run
+        _run_processes.pop(run_id, None)
 
 
 def _run_text_pipeline(input_text: str, config: dict[str, Any], run_id: str | None = None) -> list[dict[str, Any]]:
     """Execute text watermark generation, before-detection, rewrite attack, and after-detection."""
     wm_sec = config["watermark"]
     att_sec = config["attack"]
-    
-    def report_progress(stage: str, percentage: int, stage_status: str):
+
+    def report_progress(stage: str, percentage: int, stage_status: str) -> None:
         if run_id:
             update_run_progress(run_id, stage, percentage, stage_status)
 
-    report_progress("Loading Model", 15, "Loading HF causal LM model weights for scoring")
-    
     markllm_dir = os.environ.get("MARKLLM_DIR")
     if not markllm_dir:
-        raise RuntimeError("Watermark Lab Error: MARKLLM_DIR is not configured in the environment.")
+        raise RuntimeError(
+            "Watermark Lab Error: MARKLLM_DIR is not set. "
+            "Set it in your shell or .env file before starting Flask."
+        )
+    if not Path(markllm_dir).expanduser().is_dir():
+        raise RuntimeError(
+            f"Watermark Lab Error: MarkLLM checkout directory does not exist: {markllm_dir}"
+        )
 
     py_exe = _get_python_executable(markllm_dir)
     detect_script = str(SCRIPTS_DIR / "detect_text_watermark.py")
-    
-    # Check if checkout directory actually exists
-    if not Path(markllm_dir).is_dir():
-        raise RuntimeError(f"Watermark Lab Error: MarkLLM checkout directory does not exist: {markllm_dir}")
+    wm_params = wm_sec.get("parameters", {})
+    wm_method = wm_sec["method"]
 
-    # Step 1: Watermark Generation (or use input text if it's already watermarked)
+    # --- Step 1: Watermark Generation (or pass-through for pre-watermarked text) ---
     if config["input"]["type"] == "prompt":
-        report_progress("Generating Watermarked Content", 30, "Invoking AutoWatermark to generate marked text")
-        cmd_gen = [
-            py_exe, detect_script, "watermark", "-",
-            "--scheme", wm_sec["method"],
-            "--upstream-dir", markllm_dir,
-            "--json",
-        ]
-        
-        # Add generation parameters
-        wm_params = wm_sec.get("parameters", {})
-        if "model" in wm_params:
-            cmd_gen.extend(["--model", wm_params["model"]])
-        if "device" in wm_params:
-            cmd_gen.extend(["--device", wm_params["device"]])
-        if "seed" in wm_params:
-            cmd_gen.extend(["--seed", str(wm_params["seed"])])
-            
-        gen_json = _run_subprocess(cmd_gen, input_data=input_text)
-        gen_payload = json.loads(gen_json)
-        
-        # Read the generated output
-        watermarked_path = Path(gen_payload["watermarked_output"])
-        watermarked_text = watermarked_path.read_text("utf-8")
+        report_progress(
+            "Generating Watermarked Content", 20,
+            f"Loading {wm_params.get('model', 'facebook/opt-1.3b')} — CPU inference may take several minutes"
+        )
+        # Write generated text to a temp file instead of stdout to avoid
+        # gen_payload["watermarked_output"] == "-" path confusion.
+        with tempfile.NamedTemporaryFile(
+            suffix=".wm.txt", delete=False, dir=str(ROOT_DIR / "experiments")
+        ) as tmp_wm:
+            tmp_wm_path = tmp_wm.name
+        try:
+            cmd_gen = [
+                py_exe, detect_script, "watermark", "-",
+                "--scheme", wm_method,
+                "--upstream-dir", markllm_dir,
+                "--watermarked-output", tmp_wm_path,
+                "--json",
+            ]
+            if "model" in wm_params:
+                cmd_gen.extend(["--model", wm_params["model"]])
+            if "device" in wm_params:
+                cmd_gen.extend(["--device", wm_params["device"]])
+            if "seed" in wm_params:
+                cmd_gen.extend(["--seed", str(wm_params["seed"])])
+
+            report_progress(
+                "Generating Watermarked Content", 25,
+                f"Generating with {wm_method.upper()} scheme — waiting for subprocess…"
+            )
+            _run_subprocess(cmd_gen, input_data=input_text,
+                            timeout=_TIMEOUT_MODEL_LOAD + _TIMEOUT_GENERATION,
+                            run_id=run_id)
+            watermarked_text = Path(tmp_wm_path).read_text("utf-8")
+        finally:
+            try:
+                Path(tmp_wm_path).unlink(missing_ok=True)
+            except OSError:
+                pass
     else:
-        report_progress("Generating Watermarked Content", 30, "Skipped generation: using pre-watermarked text input")
+        report_progress("Generating Watermarked Content", 25,
+                        "Skipped generation: using pre-watermarked text input")
         watermarked_text = input_text
 
-    # Step 2: Detect Before
-    report_progress("Pre-Attack Detection", 50, "Evaluating baseline watermark strength before rewrite")
+    # --- Step 2: Detect Before Attack ---
+    report_progress("Pre-Attack Detection", 50,
+                    f"Running {wm_method.upper()} detector before attack — loading model…")
     cmd_det_before = [
         py_exe, detect_script, "detect", "-",
-        "--scheme", wm_sec["method"],
+        "--scheme", wm_method,
         "--upstream-dir", markllm_dir,
         "--json",
     ]
-    wm_params = wm_sec.get("parameters", {})
     if "model" in wm_params:
         cmd_det_before.extend(["--model", wm_params["model"]])
     if "device" in wm_params:
         cmd_det_before.extend(["--device", wm_params["device"]])
-        
-    before_json = _run_subprocess(cmd_det_before, input_data=watermarked_text)
+
+    before_json = _run_subprocess(cmd_det_before, input_data=watermarked_text,
+                                  timeout=_TIMEOUT_MODEL_LOAD + _TIMEOUT_DETECTION,
+                                  run_id=run_id)
     before_payload = json.loads(before_json)
     score_before = before_payload.get("score")
 
-    # Step 3: Rewrite Attack
-    report_progress("Running Attack", 65, "Executing LLM rewrite attack via backend API")
+    # --- Step 3: Rewrite Attack ---
+    report_progress("Running Attack", 65, "Executing rewrite attack via configured backend")
     rewrite_script = str(SCRIPTS_DIR / "rewrite_text.py")
+    att_params = att_sec.get("parameters", {})
     cmd_rew = [
         sys.executable, rewrite_script, "-",
-        "--backend", att_sec.get("parameters", {}).get("backend", "print-prompt"),
-        "--strength", att_sec.get("parameters", {}).get("strength", "paraphrase"),
+        "--backend", att_params.get("backend", "print-prompt"),
+        "--strength", att_params.get("strength", "paraphrase"),
     ]
-    
-    # Forward model/url if provided
-    att_params = att_sec.get("parameters", {})
     if "model" in att_params:
         cmd_rew.extend(["--model", att_params["model"]])
     if "base_url" in att_params:
         cmd_rew.extend(["--base-url", att_params["base_url"]])
     if att_params.get("allow_remote"):
         cmd_rew.extend(["--allow-remote"])
-        
-    rewritten_text = _run_subprocess(cmd_rew, input_data=watermarked_text)
 
-    # Step 4: Detect After
-    report_progress("Post-Attack Detection", 80, "Evaluating remaining watermark strength after rewrite")
+    rewritten_text = _run_subprocess(cmd_rew, input_data=watermarked_text,
+                                     timeout=_TIMEOUT_ATTACK, run_id=run_id)
+
+    # --- Step 4: Detect After Attack ---
+    report_progress("Post-Attack Detection", 80,
+                    f"Running {wm_method.upper()} detector after attack — loading model…")
     cmd_det_after = [
         py_exe, detect_script, "detect", "-",
-        "--scheme", wm_sec["method"],
+        "--scheme", wm_method,
         "--upstream-dir", markllm_dir,
         "--json",
     ]
@@ -369,17 +549,20 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any], run_id: str | No
         cmd_det_after.extend(["--model", wm_params["model"]])
     if "device" in wm_params:
         cmd_det_after.extend(["--device", wm_params["device"]])
-        
-    after_json = _run_subprocess(cmd_det_after, input_data=rewritten_text)
+
+    after_json = _run_subprocess(cmd_det_after, input_data=rewritten_text,
+                                 timeout=_TIMEOUT_MODEL_LOAD + _TIMEOUT_DETECTION,
+                                 run_id=run_id)
     after_payload = json.loads(after_json)
     score_after = after_payload.get("score")
 
-    # Step 5: Lexical / Semantic metrics
-    report_progress("Calculating Metrics", 90, "Computing Jaccard bigram divergence and semantic similarities")
+    # --- Step 5: Quality / Lexical Metrics ---
+    report_progress("Calculating Metrics", 90,
+                    "Computing bigram divergence and semantic similarity")
     lexical_div = compute_lexical_divergence(watermarked_text, rewritten_text)
     semantic_sim = compute_semantic_similarity(watermarked_text, rewritten_text)
 
-    metrics = [
+    metrics: list[dict[str, Any]] = [
         {"name": "detection_score_before", "value": score_before, "unit": "score"},
         {"name": "detection_score_after", "value": score_after, "unit": "score"},
         {"name": "lexical_divergence", "value": lexical_div, "unit": "ratio"},
@@ -611,10 +794,29 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any], run_id: str 
 # Thread Pool Execution Manager
 # =====================================================================
 
+# Ensure the experiments temp output directory exists
+(ROOT_DIR / "experiments").mkdir(exist_ok=True)
+
+
 def queue_experiment_run(run_id: str, experiment_id: str, config: dict[str, Any]) -> None:
     """Submit an experiment execution run to the background worker pool."""
     future = _executor.submit(run_pipeline, run_id, experiment_id, config)
     _active_runs[run_id] = future
+
+
+def cancel_run(run_id: str) -> bool:
+    """Attempt to cancel an active run by killing its child subprocess(es).
+
+    Returns True if any process was signalled, False if nothing was found.
+    """
+    killed = False
+    for proc in list(_run_processes.get(run_id, [])):
+        try:
+            proc.kill()
+            killed = True
+        except (OSError, ProcessLookupError):
+            pass
+    return killed
 
 
 def get_active_run_futures() -> dict[str, concurrent.futures.Future]:
