@@ -38,18 +38,51 @@ from common import MAX_INPUT_BYTES
 from engine import capabilities, clean_bytes, inspect_bytes
 from session import FileSession, start_janitor
 
+import uuid
 from provenance.batch import run_batch_scan
-from provenance.db import delete_scan as delete_db_scan, get_scan as get_db_scan, list_scans as list_db_scans, save_scan as save_db_scan
+from provenance.db import (
+    delete_scan as delete_db_scan,
+    get_scan as get_db_scan,
+    list_scans as list_db_scans,
+    save_scan as save_db_scan,
+    save_experiment,
+    get_experiment,
+    list_experiments,
+    delete_experiment,
+    save_experiment_run,
+    get_experiment_run,
+    list_experiment_runs,
+    delete_experiment_run,
+    get_run_metrics,
+    list_benchmarks,
+    save_benchmark,
+)
 from provenance.reports.html_report import generate_html_report
 from provenance.reports.json_report import generate_json_report
 from provenance.reports.zip_export import build_batch_zip
 from provenance.schema import Finding, ProvenanceScanResult, ProvenanceScore
+from provenance.experiments import (
+    validate_config,
+    queue_experiment_run,
+    cancel_run,
+    get_active_run_futures,
+    get_harness_status,
+    _validate_config_dict,
+)
 
 app = Flask(
     __name__,
     template_folder="templates",
     static_folder="static",
 )
+
+# Template filter for formatting UNIX timestamps
+@app.template_filter("datetimeformat")
+def datetimeformat_filter(value: float, format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
+    try:
+        return time.strftime(format_str, time.localtime(value))
+    except Exception:
+        return str(value)
 
 # 256 MB max upload cap at Flask layer
 app.config["MAX_CONTENT_LENGTH"] = MAX_INPUT_BYTES
@@ -516,6 +549,432 @@ def api_v1_get_report(scan_id: str) -> Response:
         resp = make_response(json_content, 200)
         resp.headers["Content-Type"] = "application/json; charset=utf-8"
         return resp
+
+
+# =====================================================================
+# Phase 3 — Watermark Lab Web Routes
+# =====================================================================
+
+@app.route("/lab", methods=["GET"])
+def lab_index() -> str:
+    """List experiments, runs, active futures, and benchmarks."""
+    experiments = list_experiments()
+    runs = list_experiment_runs()
+    benchmarks = list_benchmarks()
+    active_futures = get_active_run_futures()
+    harness_status = get_harness_status()
+    
+    # Enrich runs with experiment names
+    enriched_runs = []
+    for r in runs:
+        exp = get_experiment(r["experiment_id"])
+        r_dict = dict(r)
+        r_dict["experiment_name"] = exp["name"] if exp else "Unknown"
+        r_dict["is_active"] = r["id"] in active_futures
+        enriched_runs.append(r_dict)
+
+    return render_template(
+        "lab_list.html",
+        experiments=experiments,
+        runs=enriched_runs,
+        benchmarks=benchmarks,
+        harness_status=harness_status,
+    )
+
+
+@app.route("/lab/status", methods=["GET"])
+def lab_status_dashboard() -> str:
+    """Show details of local ML harnesses and initialization actions."""
+    status_dict = get_harness_status()
+    log_content = ""
+    log_path = ROOT_DIR / "scratch" / "init_lab.log"
+    if log_path.is_file():
+        try:
+            log_content = log_path.read_text("utf-8")
+        except Exception:
+            pass
+    return render_template("lab_status.html", status=status_dict, log_content=log_content)
+
+
+@app.route("/lab/status/initialize", methods=["POST"])
+def lab_status_initialize() -> Response:
+    """Triggers the asynchronous initialization process of the watermarking harnesses."""
+    log_dir = ROOT_DIR / "scratch"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "init_lab.log"
+    
+    script_path = ROOT_DIR / "service" / "scripts" / "setup_markllm.ps1"
+    
+    if os.name == "nt":
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+    else:
+        script_sh = ROOT_DIR / "service" / "scripts" / "setup_markllm.sh"
+        cmd = ["bash", str(script_sh)]
+        
+    try:
+        f_log = open(log_file, "w", encoding="utf-8")
+        subprocess.Popen(cmd, stdout=f_log, stderr=subprocess.STDOUT)
+    except Exception as e:
+        log_file.write_text(f"Initialization trigger error: {e}", encoding="utf-8")
+        
+    return redirect(url_for("lab_status_dashboard"))
+
+
+@app.route("/lab/status/log", methods=["GET"])
+def lab_status_log() -> Response:
+    """Return JSON containing the current content of the initialization log."""
+    log_path = ROOT_DIR / "scratch" / "init_lab.log"
+    content = ""
+    if log_path.is_file():
+        try:
+            content = log_path.read_text("utf-8")
+        except Exception:
+            pass
+    return make_response(json.dumps({"log": content}), 200, {"Content-Type": "application/json"})
+
+
+
+@app.route("/lab/experiment/create", methods=["GET", "POST"])
+def lab_experiment_create() -> Response | str:
+    """Create a new experiment configuration."""
+    if request.method == "POST":
+        config_str = request.form.get("config_str", "").strip()
+        if "config_file" in request.files:
+            f = request.files["config_file"]
+            if f.filename:
+                config_str = f.read().decode("utf-8")
+
+        if not config_str:
+            return render_template("lab_create.html", error="No configuration provided.")
+
+        try:
+            config = validate_config(config_str)
+        except ValueError as e:
+            return render_template("lab_create.html", error=str(e), config_str=config_str)
+
+        exp_id = f"exp-{uuid.uuid4().hex[:12]}"
+        save_experiment(exp_id, config["experiment"]["name"], json.dumps(config), time.time())
+        return redirect(url_for("lab_index"))
+
+    return render_template("lab_create.html")
+
+
+@app.route("/lab/experiment/<exp_id>/delete", methods=["POST"])
+def lab_experiment_delete(exp_id: str) -> Response:
+    """Delete an experiment definition and cascading runs."""
+    delete_experiment(exp_id)
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/experiment/<exp_id>/run", methods=["POST"])
+def lab_experiment_run(exp_id: str) -> Response | str:
+    """Launch an experiment, generating one or more runs (if sweep is specified)."""
+    exp = get_experiment(exp_id)
+    if not exp:
+        return render_template("error.html", error="Experiment not found."), 404
+
+    config = json.loads(exp["configuration_json"])
+    sweep_sec = config.get("sweep")
+    runs_to_start = []
+
+    if sweep_sec:
+        param_path = sweep_sec["parameter"]
+        sweep_values = sweep_sec["values"]
+        path_keys = param_path.split(".")
+
+        def set_nested(d, path_keys, val):
+            current = d
+            for key in path_keys[:-1]:
+                current = current.setdefault(key, {})
+            current[path_keys[-1]] = val
+
+        for val in sweep_values:
+            import copy
+            sweep_config = copy.deepcopy(config)
+            try:
+                set_nested(sweep_config, path_keys, val)
+                # Keep tracking metadata about this sweep step
+                sweep_config["experiment"]["name"] = f"{config['experiment']['name']} ({param_path}={val})"
+            except Exception:
+                pass
+            runs_to_start.append(sweep_config)
+    else:
+        runs_to_start.append(config)
+
+    for run_config in runs_to_start:
+        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        queue_experiment_run(run_id, exp_id, run_config)
+
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/run/<run_id>", methods=["GET"])
+def lab_run_detail(run_id: str) -> Response | str:
+    """View details, reproducibility logs, and metrics of a run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Experiment run not found."), 404
+
+    exp = get_experiment(run["experiment_id"])
+    metrics = get_run_metrics(run_id)
+    
+    # Try parsing metadata
+    try:
+        repro = json.loads(run["reproducibility_json"])
+    except Exception:
+        repro = {}
+
+    return render_template(
+        "lab_run.html",
+        run=run,
+        experiment=exp,
+        metrics=metrics,
+        repro=repro,
+    )
+
+
+@app.route("/lab/run/<run_id>/progress", methods=["GET"])
+def lab_run_progress(run_id: str) -> Response:
+    """AJAX progress endpoint returning JSON status of a run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return make_response(json.dumps({"error": "Not found"}), 404, {"Content-Type": "application/json"})
+
+    metrics = get_run_metrics(run_id)
+    # Coerce NULL progress fields (older rows before columns existed) to safe defaults
+    current_stage = run.get("current_stage") or ("Completed" if run["status"] == "completed" else "Unknown")
+    stage_percentage = run.get("stage_percentage")
+    if stage_percentage is None:
+        stage_percentage = 100 if run["status"] in ("completed", "failed") else 0
+    stage_status = run.get("stage_status") or ""
+
+    return make_response(
+        json.dumps({
+            "status": run["status"],
+            "error": run["error"],
+            "finished_at": run["finished_at"],
+            "current_stage": current_stage,
+            "stage_percentage": stage_percentage,
+            "stage_status": stage_status,
+            "metrics": metrics,
+        }),
+        200,
+        {"Content-Type": "application/json"},
+    )
+
+
+@app.route("/lab/run/<run_id>/cancel", methods=["POST"])
+def lab_run_cancel(run_id: str) -> Response:
+    """Cancel an actively running experiment run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return make_response(json.dumps({"error": "Not found"}), 404, {"Content-Type": "application/json"})
+    if run["status"] not in ("running", "queued"):
+        return make_response(
+            json.dumps({"error": f"Run is {run['status']}, not cancellable."}),
+            400, {"Content-Type": "application/json"},
+        )
+    killed = cancel_run(run_id)
+    # Mark as cancelled in the database
+    save_experiment_run(
+        run_id=run_id,
+        experiment_id=run["experiment_id"],
+        started_at=run["started_at"],
+        finished_at=time.time(),
+        status="failed",
+        device=run["device"] or "auto",
+        input_hash=run["input_hash"],
+        configuration_hash=run["configuration_hash"],
+        error="Run was cancelled by user.",
+        reproducibility_json=run["reproducibility_json"] or "{}",
+        current_stage="Failed",
+        stage_percentage=100,
+        stage_status="Cancelled by user.",
+    )
+    return make_response(
+        json.dumps({"cancelled": True, "process_killed": killed}),
+        200, {"Content-Type": "application/json"},
+    )
+
+
+@app.route("/lab/run/<run_id>/retry", methods=["POST"])
+def lab_run_retry(run_id: str) -> Response | str:
+    """Create a new run from the same experiment config (preserves original run history)."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Run not found."), 404
+    exp = get_experiment(run["experiment_id"])
+    if not exp:
+        return render_template("error.html", error="Parent experiment not found."), 404
+
+    config = json.loads(exp["configuration_json"])
+    new_run_id = f"run-{uuid.uuid4().hex[:12]}"
+    queue_experiment_run(new_run_id, exp["id"], config)
+    return redirect(url_for("lab_run_detail", run_id=new_run_id))
+
+
+@app.route("/lab/run/<run_id>/delete", methods=["POST"])
+def lab_run_delete(run_id: str) -> Response:
+    """Delete a specific run log."""
+    delete_experiment_run(run_id)
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/compare", methods=["GET"])
+def lab_compare() -> str:
+    """Compare multiple experiment runs side-by-side."""
+    ids_raw = request.args.get("run_ids", "")
+    if "," in ids_raw:
+        run_ids = [r.strip() for r in ids_raw.split(",") if r.strip()]
+    else:
+        run_ids = request.args.getlist("run_ids")
+
+    runs = []
+    all_metrics_set = set()
+    run_metrics_map = {}
+
+    for rid in run_ids:
+        r = get_experiment_run(rid)
+        if r:
+            exp = get_experiment(r["experiment_id"])
+            r_dict = dict(r)
+            r_dict["experiment_name"] = exp["name"] if exp else "Unknown"
+            
+            # Fetch metrics
+            metrics = get_run_metrics(rid)
+            metrics_dict = {m["name"]: m for m in metrics}
+            run_metrics_map[rid] = metrics_dict
+            
+            for mname in metrics_dict:
+                all_metrics_set.add(mname)
+            
+            runs.append(r_dict)
+
+    return render_template(
+        "lab_compare.html",
+        runs=runs,
+        metric_names=sorted(list(all_metrics_set)),
+        run_metrics_map=run_metrics_map,
+    )
+
+
+@app.route("/lab/run/<run_id>/report", methods=["GET"])
+def lab_run_report(run_id: str) -> Response | str:
+    """Download experiment run report in json or print-friendly html format."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Run not found."), 404
+
+    exp = get_experiment(run["experiment_id"])
+    metrics = get_run_metrics(run_id)
+    fmt = request.args.get("format", "json").lower()
+
+    if fmt == "html":
+        try:
+            repro = json.loads(run["reproducibility_json"])
+        except Exception:
+            repro = {}
+        
+        # Self-contained HTML report view
+        html_content = render_template(
+            "lab_report.html",
+            run=run,
+            experiment=exp,
+            metrics=metrics,
+            repro=repro,
+        )
+        resp = make_response(html_content, 200)
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        return resp
+    else:
+        # JSON output containing config, metadata, and final results
+        report_data = {
+            "run_id": run["id"],
+            "experiment_name": exp["name"] if exp else "Unknown",
+            "configuration": json.loads(exp["configuration_json"]) if exp else {},
+            "status": run["status"],
+            "device": run["device"],
+            "started_at": run["started_at"],
+            "finished_at": run["finished_at"],
+            "input_hash": run["input_hash"],
+            "configuration_hash": run["configuration_hash"],
+            "error": run["error"],
+            "reproducibility_metadata": json.loads(run["reproducibility_json"]),
+            "metrics": [{"name": m["name"], "value": m["value"], "unit": m["unit"]} for m in metrics],
+        }
+        resp = make_response(json.dumps(report_data, indent=2, ensure_ascii=False), 200)
+        resp.headers["Content-Type"] = "application/json; charset=utf-8"
+        resp.headers["Content-Disposition"] = f"attachment; filename=traceclean_lab_report_{run_id}.json"
+        return resp
+
+
+@app.route("/lab/health", methods=["GET"])
+def lab_health() -> Response:
+    """Structured health-check for the Watermark Lab environment."""
+    import subprocess as _sp
+    checks: dict[str, Any] = {}
+
+    # 1. Database connectivity
+    try:
+        from provenance.db import get_connection, DB_PATH
+        conn = get_connection(DB_PATH)
+        conn.execute("SELECT 1").fetchone()
+        conn.close()
+        checks["database"] = {"status": "ok", "path": str(DB_PATH)}
+    except Exception as exc:
+        checks["database"] = {"status": "error", "detail": str(exc)}
+
+    # 2. Env vars
+    env_vars = {
+        "MARKLLM_DIR": os.environ.get("MARKLLM_DIR"),
+        "REVERSE_SYNTHID_DIR": os.environ.get("REVERSE_SYNTHID_DIR"),
+        "NOAI_WATERMARK_DIR": os.environ.get("NOAI_WATERMARK_DIR"),
+    }
+    checks["environment"] = {
+        var: {
+            "set": val is not None,
+            "exists": Path(val).expanduser().is_dir() if val else False,
+            "value": val or "(not set)",
+        }
+        for var, val in env_vars.items()
+    }
+
+    # 3. MarkLLM executable
+    markllm_dir = os.environ.get("MARKLLM_DIR")
+    if markllm_dir:
+        from provenance.experiments import _get_python_executable, SCRIPTS_DIR as _SCRIPTS_DIR
+        py_exe = _get_python_executable(markllm_dir)
+        detect_script = str(_SCRIPTS_DIR / "detect_text_watermark.py")
+        try:
+            r = _sp.run([py_exe, detect_script, "--help"],
+                        capture_output=True, timeout=30, text=True)
+            checks["markllm_executable"] = {
+                "status": "ok" if r.returncode == 0 else "error",
+                "returncode": r.returncode,
+                "python": py_exe,
+            }
+        except Exception as exc:
+            checks["markllm_executable"] = {"status": "error", "detail": str(exc)}
+    else:
+        checks["markllm_executable"] = {"status": "not_configured"}
+
+    # 4. Harness status
+    try:
+        checks["harness_status"] = get_harness_status()
+    except Exception as exc:
+        checks["harness_status"] = {"error": str(exc)}
+
+    overall = "ok" if all(
+        v.get("status") in ("ok", "not_configured", None)
+        for v in checks.values()
+        if isinstance(v, dict)
+    ) else "degraded"
+
+    return make_response(
+        json.dumps({"overall": overall, "checks": checks}, indent=2),
+        200,
+        {"Content-Type": "application/json"},
+    )
 
 
 @app.errorhandler(413)

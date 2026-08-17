@@ -20,12 +20,13 @@ DB_PATH = Path(__file__).resolve().parent.parent / "contenttrace.db"
 def get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     """Open or create a SQLite database connection with row factory."""
     conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA foreign_keys = ON;")
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db(db_path: Path = DB_PATH) -> None:
-    """Initialize database tables for scans and findings."""
+    """Initialize database tables for scans, findings, experiments, runs, metrics, and benchmarks."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(db_path)
     try:
@@ -69,8 +70,77 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 """
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS experiments (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    configuration_json TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS experiment_runs (
+                    id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    finished_at REAL,
+                    status TEXT NOT NULL,
+                    device TEXT,
+                    input_hash TEXT,
+                    configuration_hash TEXT NOT NULL,
+                    error TEXT,
+                    reproducibility_json TEXT NOT NULL,
+                    current_stage TEXT,
+                    stage_percentage INTEGER,
+                    stage_status TEXT,
+                    FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            # Ensure columns exist for dynamic upgrading
+            cursor = conn.execute("PRAGMA table_info(experiment_runs)")
+            columns = [r["name"] for r in cursor.fetchall()]
+            if "current_stage" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN current_stage TEXT")
+            if "stage_percentage" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN stage_percentage INTEGER")
+            if "stage_status" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN stage_status TEXT")
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    value REAL,
+                    unit TEXT NOT NULL,
+                    FOREIGN KEY (run_id) REFERENCES experiment_runs (id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS benchmarks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    version TEXT NOT NULL,
+                    description TEXT,
+                    config_json TEXT NOT NULL
+                )
+                """
+            )
+
             conn.execute("CREATE INDEX IF NOT EXISTS idx_scans_created ON scans (created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_scan ON findings (scan_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_experiment ON experiment_runs (experiment_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_metrics_run ON metrics (run_id)")
     finally:
         conn.close()
 
@@ -216,3 +286,280 @@ def delete_scan(scan_id: str, db_path: Path = DB_PATH) -> bool:
             return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+# =====================================================================
+# Phase 3 — Watermark Lab CRUD Helpers
+# =====================================================================
+
+def save_experiment(
+    exp_id: str,
+    name: str,
+    configuration_json: str,
+    created_at: float,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Insert or replace an experiment definition."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO experiments (id, name, configuration_json, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (exp_id, name, configuration_json, created_at),
+            )
+    finally:
+        conn.close()
+
+
+def get_experiment(exp_id: str, db_path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Retrieve an experiment definition."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM experiments WHERE id = ?", (exp_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_experiments(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """List all experiment definitions ordered by created_at DESC."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM experiments ORDER BY created_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_experiment(exp_id: str, db_path: Path = DB_PATH) -> bool:
+    """Delete an experiment and its runs (cascading)."""
+    if not db_path.exists():
+        return False
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM experiments WHERE id = ?", (exp_id,))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_experiment_run(
+    run_id: str,
+    experiment_id: str,
+    started_at: float,
+    finished_at: float | None,
+    status: str,
+    device: str | None,
+    input_hash: str | None,
+    configuration_hash: str,
+    error: str | None,
+    reproducibility_json: str,
+    current_stage: str | None = None,
+    stage_percentage: int | None = None,
+    stage_status: str | None = None,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Insert or replace an experiment run record."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            # First, check if run exists to preserve progress info if not provided
+            existing = conn.execute(
+                "SELECT current_stage, stage_percentage, stage_status FROM experiment_runs WHERE id = ?",
+                (run_id,)
+            ).fetchone()
+            
+            c_stage = current_stage
+            s_pct = stage_percentage
+            s_stat = stage_status
+            
+            if existing:
+                if c_stage is None: c_stage = existing["current_stage"]
+                if s_pct is None: s_pct = existing["stage_percentage"]
+                if s_stat is None: s_stat = existing["stage_status"]
+
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO experiment_runs (
+                    id, experiment_id, started_at, finished_at, status, device,
+                    input_hash, configuration_hash, error, reproducibility_json,
+                    current_stage, stage_percentage, stage_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    experiment_id,
+                    started_at,
+                    finished_at,
+                    status,
+                    device,
+                    input_hash,
+                    configuration_hash,
+                    error,
+                    reproducibility_json,
+                    c_stage,
+                    s_pct,
+                    s_stat,
+                ),
+            )
+    finally:
+        conn.close()
+
+
+def get_experiment_run(run_id: str, db_path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Retrieve a single experiment run."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute("SELECT * FROM experiment_runs WHERE id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_experiment_runs(
+    experiment_id: str | None = None,
+    db_path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    """List experiment runs, optionally filtered by experiment_id."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        if experiment_id:
+            rows = conn.execute(
+                "SELECT * FROM experiment_runs WHERE experiment_id = ? ORDER BY started_at DESC",
+                (experiment_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM experiment_runs ORDER BY started_at DESC").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def delete_experiment_run(run_id: str, db_path: Path = DB_PATH) -> bool:
+    """Delete an individual experiment run."""
+    if not db_path.exists():
+        return False
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM experiment_runs WHERE id = ?", (run_id,))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_run_metrics(
+    run_id: str,
+    metrics: list[dict[str, Any]],
+    db_path: Path = DB_PATH,
+) -> None:
+    """Save a list of metric data points for a specific run."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            # Clear existing metrics for the run to avoid duplicates on re-saves
+            conn.execute("DELETE FROM metrics WHERE run_id = ?", (run_id,))
+            for m in metrics:
+                conn.execute(
+                    """
+                    INSERT INTO metrics (run_id, name, value, unit)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (run_id, m["name"], m.get("value"), m["unit"]),
+                )
+    finally:
+        conn.close()
+
+
+def get_run_metrics(run_id: str, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Retrieve all metrics recorded for a specific run."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM metrics WHERE run_id = ?", (run_id,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def save_benchmark(
+    bench_id: str,
+    name: str,
+    version: str,
+    description: str | None,
+    config_json: str,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Insert or replace a benchmark record."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO benchmarks (id, name, version, description, config_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (bench_id, name, version, description, config_json),
+            )
+    finally:
+        conn.close()
+
+
+def list_benchmarks(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """List all registered benchmarks."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT * FROM benchmarks ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def update_run_progress(
+    run_id: str,
+    stage: str,
+    percentage: int,
+    stage_status: str,
+    error: str | None = None,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Update progress metrics of a running experiment."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            if error:
+                conn.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET current_stage = ?, stage_percentage = ?, stage_status = ?, error = ?
+                    WHERE id = ?
+                    """,
+                    (stage, percentage, stage_status, error, run_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET current_stage = ?, stage_percentage = ?, stage_status = ?
+                    WHERE id = ?
+                    """,
+                    (stage, percentage, stage_status, run_id),
+                )
+    finally:
+        conn.close()
+
+

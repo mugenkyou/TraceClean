@@ -1,0 +1,238 @@
+{% extends "lab_base.html" %}
+
+{% block lab_content %}
+<style>
+  .compare-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: var(--shadow-sm);
+  }
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+  @media (min-width: 992px) {
+    .compare-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .comp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+  .comp-table th {
+    padding: 0.75rem;
+    color: var(--text-dim);
+    border-bottom: 2px solid var(--border-subtle);
+    background: rgba(0,0,0,0.1);
+  }
+  .comp-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
+    color: var(--text-light);
+  }
+</style>
+
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+  <h2 style="color: #fff; margin: 0; font-size: 1.4rem;">Experiment Runs Comparison</h2>
+  <a href="{{ url_for('lab_index') }}" class="btn" style="font-size: 0.85rem;">&larr; Back to Lab</a>
+</div>
+
+<div class="compare-grid">
+  <!-- Left Side: Interactive Trade-Off Frontier Chart -->
+  <div class="compare-card">
+    <h3 style="color: #fff; margin-top: 0; margin-bottom: 1rem; font-size: 1.1rem; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.5rem;">
+      Quality vs. Removal Frontier Curve
+    </h3>
+    <div style="position: relative; height: 350px; background: #0f141c; border-radius: 6px; padding: 0.5rem;">
+      <canvas id="frontierChart"></canvas>
+    </div>
+    <div style="font-size: 0.75rem; color: var(--text-dim); margin-top: 0.75rem; text-align: center;">
+      Ideal outcome: bottom-right (Watermark Score = 0, Quality = 1.0)
+    </div>
+  </div>
+
+  <!-- Right Side: Basic Info & Swept Parameter Details -->
+  <div class="compare-card">
+    <h3 style="color: #fff; margin-top: 0; margin-bottom: 1rem; font-size: 1.1rem; border-bottom: 1px solid var(--border-subtle); padding-bottom: 0.5rem;">
+      Compare Run Configurations
+    </h3>
+    <table class="comp-table">
+      <thead>
+        <tr>
+          <th>Metric Name</th>
+          {% for r in runs %}
+            <th style="font-family: monospace; font-size: 0.8rem;">{{ r.id }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="font-weight: 600; color: #fff;">Status</td>
+          {% for r in runs %}
+            <td><span style="font-weight: 600; color: {% if r.status == 'completed' %}#1ed760{% elif r.status == 'failed' %}#ff4d4f{% else %}#ffc53d{% endif %};">{{ r.status | upper }}</span></td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td style="font-weight: 600; color: #fff;">Device</td>
+          {% for r in runs %}
+            <td>{{ r.device or 'auto' }}</td>
+          {% endfor %}
+        </tr>
+        {% for mname in metric_names %}
+          <tr>
+            <td style="font-weight: 600; color: #fff;">{{ mname }}</td>
+            {% for r in runs %}
+              {% set m = run_metrics_map[r.id].get(mname) %}
+              <td style="font-family: monospace; color: var(--accent-cyan); font-weight: 600;">
+                {% if m and m.value is not none %}
+                  {{ m.value | round(4) }} <span style="font-size: 0.75rem; color: var(--text-dim);">{{ m.unit }}</span>
+                {% else %}
+                  N/A
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+        <!-- Derived delta and reduction calculations -->
+        <tr>
+          <td style="font-weight: 600; color: #fff;">detection_score_delta</td>
+          {% for r in runs %}
+            {% set before = run_metrics_map[r.id].get('detection_score_before') %}
+            {% set after = run_metrics_map[r.id].get('detection_score_after') %}
+            <td style="font-family: monospace; color: #ffc53d; font-weight: 600;">
+              {% if before and after and before.value is not none and after.value is not none %}
+                {{ (after.value - before.value) | round(4) }} <span style="font-size: 0.75rem; color: var(--text-dim);">score</span>
+              {% else %}
+                N/A
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+        <tr>
+          <td style="font-weight: 600; color: #fff;">detection_score_reduction</td>
+          {% for r in runs %}
+            {% set before = run_metrics_map[r.id].get('detection_score_before') %}
+            {% set after = run_metrics_map[r.id].get('detection_score_after') %}
+            <td style="font-family: monospace; color: #1ed760; font-weight: 600;">
+              {% if before and after and before.value is not none and after.value is not none and before.value != 0 %}
+                {{ (((before.value - after.value) / before.value) * 100) | round(2) }}%
+              {% else %}
+                N/A
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Load Chart.js CDN for interactive plotting -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Prepare data points for plotting: Quality vs Watermark Detection After Attack
+  // X: Quality (SSIM, 1 - Lexical Divergence, or PSNR normalized)
+  // Y: Watermark Detection Score After Attack
+  const runs = {{ runs | tojson }};
+  const runMetrics = {{ run_metrics_map | tojson }};
+
+  const chartDataPoints = [];
+
+  runs.forEach(r => {
+    if (r.status !== 'completed') return;
+    const metrics = runMetrics[r.id] || {};
+    
+    // Attempt to extract y-axis: detection score after
+    const scoreAfterObj = metrics['detection_score_after'];
+    const scoreAfter = scoreAfterObj ? scoreAfterObj.value : null;
+
+    // Attempt to extract x-axis: Quality metric
+    // Priority: ssim (ratio), lexical_divergence (which we invert: 1 - lexical_div), psnr (dB)
+    let qualityVal = null;
+    let qualityLabel = 'Quality';
+
+    if (metrics['ssim']) {
+      qualityVal = metrics['ssim'].value;
+      qualityLabel = 'Structural Similarity (SSIM)';
+    } else if (metrics['lexical_divergence']) {
+      qualityVal = 1.0 - metrics['lexical_divergence'].value;
+      qualityLabel = 'Lexical Preservation (1 - Divergence)';
+    } else if (metrics['psnr']) {
+      qualityVal = metrics['psnr'].value;
+      qualityLabel = 'Peak Signal to Noise Ratio (PSNR)';
+    }
+
+    if (scoreAfter !== null && qualityVal !== null) {
+      chartDataPoints.push({
+        x: qualityVal,
+        y: scoreAfter,
+        label: `${r.id} (${r.experiment_name})`,
+        xAxisLabel: qualityLabel
+      });
+    }
+  });
+
+  // Setup the chart
+  const ctx = document.getElementById('frontierChart').getContext('2d');
+  const xAxisTitle = chartDataPoints.length > 0 ? chartDataPoints[0].xAxisLabel : 'Content Quality';
+
+  new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Runs Trade-off',
+        data: chartDataPoints,
+        backgroundColor: '#00f2fe',
+        borderColor: '#4facfe',
+        borderWidth: 2,
+        pointRadius: 6,
+        pointHoverRadius: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: xAxisTitle,
+            color: '#94a3b8',
+            font: { size: 12, weight: 'bold' }
+          },
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#94a3b8' }
+        },
+        y: {
+          title: {
+            display: true,
+            text: 'Watermark Score After Attack',
+            color: '#94a3b8',
+            font: { size: 12, weight: 'bold' }
+          },
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#94a3b8' }
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const pt = context.raw;
+              return `${pt.label}: (Quality: ${pt.x.toFixed(4)}, Score: ${pt.y.toFixed(4)})`;
+            }
+          }
+        }
+      }
+    }
+  });
+</script>
+{% endblock %}

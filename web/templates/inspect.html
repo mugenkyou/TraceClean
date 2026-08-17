@@ -115,8 +115,8 @@
     gap: 0.5rem;
   }
   .explorer-detail-panel {
-    background: rgba(15, 20, 32, 0.4);
-    padding: 2rem;
+    background: var(--bg-card);
+    padding: 1.5rem;
     overflow-y: auto;
     height: 100%;
     display: flex;
@@ -134,13 +134,12 @@
     justify-content: space-between;
   }
   .finding-row:hover {
-    background: rgba(255,255,255,0.03);
-    border-color: rgba(0, 242, 254, 0.2);
+    background: rgba(255,255,255,0.02);
+    border-color: var(--text-muted);
   }
   .finding-row.active {
-    background: rgba(0, 242, 254, 0.05);
+    background: rgba(200, 255, 90, 0.04);
     border-color: var(--accent-cyan);
-    box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
   }
   
   /* Filter Selects */
@@ -175,18 +174,18 @@
 
     <div>
       {% if session.verification_status == 'detected' %}
-        <span class="status-badge suspicious" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
-          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-danger); box-shadow: 0 0 8px var(--status-danger);"></span>
+        <span class="status-badge suspicious" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(217, 108, 98, 0.2); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.85rem; border-radius: var(--radius-sm); font-size: 0.8rem;">
+          <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--status-danger);"></span>
           Provenance Marks Detected
         </span>
       {% elif session.verification_status == 'not_detected' %}
-        <span class="status-badge clean" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
-          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-clean); box-shadow: 0 0 8px var(--status-clean);"></span>
+        <span class="status-badge clean" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(200, 255, 90, 0.2); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.85rem; border-radius: var(--radius-sm); font-size: 0.8rem;">
+          <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--status-clean);"></span>
           Verified Clean (No Marks Found)
         </span>
       {% else %}
-        <span class="status-badge inconclusive" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 700; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.55rem 1.1rem; border-radius: var(--radius-full); font-size: 0.85rem;">
-          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--status-warn); box-shadow: 0 0 8px var(--status-warn);"></span>
+        <span class="status-badge inconclusive" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(214, 168, 79, 0.2); font-weight: 600; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.4rem 0.85rem; border-radius: var(--radius-sm); font-size: 0.8rem;">
+          <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--status-warn);"></span>
           Verification Inconclusive / Limited
         </span>
       {% endif %}

@@ -6,7 +6,13 @@
   <title>{% block title %}TraceClean — AI Content Provenance & Forensics{% endblock %}</title>
   <meta name="description" content="Forensic inspection and deterministic cleaning for AI provenance marks, C2PA, and metadata across text and binary containers.">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🛡️</text></svg>">
+  <!-- Favicon pack -->
+  <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='favicon-32x32.png') }}">
+  <link rel="icon" type="image/png" sizes="16x16" href="{{ url_for('static', filename='favicon-16x16.png') }}">
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}">
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}">
+  <meta name="theme-color" content="#C8FF5A">
 </head>
 <body>
 
@@ -14,7 +20,13 @@
   <nav class="navbar">
     <div class="container nav-content">
       <a href="{{ url_for('index') }}" class="brand">
-        <div class="brand-icon">TC</div>
+        <img
+          src="{{ url_for('static', filename='android-chrome-192x192.png') }}"
+          alt="TraceClean Logo"
+          width="30"
+          height="30"
+          style="display:block; flex-shrink:0;"
+        >
         <div>
           <span class="brand-name">TraceClean</span>
           <span class="brand-tagline">AI Forensics</span>
@@ -22,9 +34,13 @@
       </a>
       <div class="nav-links">
         <span class="privacy-badge">100% Local In-Process</span>
-        <a href="{{ url_for('index') }}" class="nav-link">Single Audit</a>
-        <a href="{{ url_for('batch_page') }}" class="nav-link">Batch Scanner</a>
-        <a href="{{ url_for('history_page') }}" class="nav-link">Scan History</a>
+        <a href="{{ url_for('index') }}" class="nav-link {% if request.path == '/' or request.path.startswith('/session') %}active{% endif %}">Single Audit</a>
+        <a href="{{ url_for('batch_page') }}" class="nav-link {% if request.path == '/batch' %}active{% endif %}">Batch Scanner</a>
+        <a href="{{ url_for('history_page') }}" class="nav-link {% if request.path == '/history' %}active{% endif %}">Scan History</a>
+        <a href="{{ url_for('lab_index') }}" class="nav-link {% if request.path.startswith('/lab') %}active{% endif %}" style="display: inline-flex; align-items: center; gap: 0.25rem;">
+          Watermark Lab
+          <span style="font-family: var(--font-mono); font-size: 0.6rem; background: rgba(200, 255, 90, 0.1); color: var(--accent-cyan); padding: 0.05rem 0.25rem; border-radius: 2px; font-weight: 600;">LAB</span>
+        </a>
         <a href="https://github.com/mugenkyou/TraceClean" target="_blank" class="nav-link">GitHub</a>
       </div>
     </div>

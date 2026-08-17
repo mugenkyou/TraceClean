@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block title %}AI Watermark Lab &amp; Evaluation{% endblock %}
+
+{% block content %}
+<style>
+  .lab-nav {
+    display: flex;
+    gap: 1.5rem;
+    border-bottom: 1px solid var(--border-subtle);
+    padding-bottom: 0.75rem;
+    margin-bottom: 2rem;
+  }
+  .lab-nav-item {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: 0.85rem;
+    font-weight: 500;
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: var(--transition);
+  }
+  .lab-nav-item:hover, .lab-nav-item.active {
+    color: var(--accent-cyan);
+    background: rgba(200, 255, 90, 0.04);
+  }
+  .lab-container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+</style>
+
+<div class="lab-container">
+  <!-- Lab Navigation Header -->
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+    <div>
+      <div style="font-size: 0.75rem; color: var(--accent-cyan); text-transform: uppercase; font-weight: 600; letter-spacing: 0.1em;">Experimental Sandbox</div>
+      <h1 style="font-family: var(--font-heading); font-size: 1.85rem; color: #fff; margin: 0.15rem 0 1.25rem;">AI Watermark Lab</h1>
+    </div>
+    <a href="{{ url_for('index') }}" style="color: var(--text-dim); font-size: 0.85rem; text-decoration: none;">&larr; Back to Forensic Scan UI</a>
+  </div>
+
+  <div class="lab-nav">
+    <a href="{{ url_for('lab_index') }}" class="lab-nav-item {% if request.path == '/lab' %}active{% endif %}">Experiments &amp; Sweeps</a>
+    <a href="{{ url_for('lab_experiment_create') }}" class="lab-nav-item {% if request.path == '/lab/experiment/create' %}active{% endif %}">New Config</a>
+    <a href="{{ url_for('lab_status_dashboard') }}" class="lab-nav-item {% if request.path == '/lab/status' %}active{% endif %}">Harness Status &amp; Initialization</a>
+  </div>
+
+  <!-- Content Injection -->
+  {% block lab_content %}{% endblock %}
+</div>
+{% endblock %}

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TraceClean Experiment Audit Report - {{ run.id }}</title>
+  <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+  <meta name="theme-color" content="#C8FF5A">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #333;
+      line-height: 1.5;
+      padding: 2rem;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.8rem;
+      border-bottom: 2px solid #333;
+      padding-bottom: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+    h2 {
+      font-size: 1.25rem;
+      margin-top: 2rem;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 0.25rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    th, td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th {
+      background-color: #f7f7f7;
+      font-weight: bold;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    .status-completed { background: #d4edda; color: #155724; }
+    .status-failed { background: #f8d7da; color: #721c24; }
+    .status-running { background: #cce5ff; color: #004085; }
+    .status-queued { background: #fff3cd; color: #856404; }
+    .disclosure {
+      margin-top: 2rem;
+      padding: 1rem;
+      background: #f8f9fa;
+      border-left: 4px solid #17a2b8;
+      font-size: 0.85rem;
+      color: #555;
+    }
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div style="display: flex; justify-content: space-between; align-items: center;">
+    <div>
+      <div style="font-size: 0.8rem; text-transform: uppercase; color: #555; font-weight: bold;">TraceClean AI Watermark Lab</div>
+      <h1>Experiment Execution Audit Report</h1>
+    </div>
+    <div class="no-print">
+      <button onclick="window.print()" style="padding: 0.5rem 1rem; font-weight: bold; cursor: pointer;">Print Report</button>
+    </div>
+  </div>
+
+  <h2>Summary Results</h2>
+  <table>
+    <tr>
+      <th style="width: 30%;">Field Name</th>
+      <th>Value</th>
+    </tr>
+    <tr>
+      <td>Experiment Name</td>
+      <td><strong>{{ experiment.name if experiment else 'Unknown' }}</strong></td>
+    </tr>
+    <tr>
+      <td>Run ID</td>
+      <td style="font-family: monospace;">{{ run.id }}</td>
+    </tr>
+    <tr>
+      <td>Execution Status</td>
+      <td><span class="badge status-{{ run.status }}">{{ run.status }}</span></td>
+    </tr>
+    <tr>
+      <td>Target Device</td>
+      <td>{{ run.device or 'auto' }}</td>
+    </tr>
+    {% if run.input_hash %}
+    <tr>
+      <td>Input Hash (SHA256)</td>
+      <td style="font-family: monospace; font-size: 0.85rem;">{{ run.input_hash }}</td>
+    </tr>
+    {% endif %}
+    <tr>
+      <td>Configuration Hash</td>
+      <td style="font-family: monospace; font-size: 0.85rem;">{{ run.configuration_hash }}</td>
+    </tr>
+  </table>
+
+  <h2>Evaluation Metrics</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Metric Name</th>
+        <th>Measured Value</th>
+        <th>Unit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in metrics %}
+        <tr>
+          <td><strong>{{ m.name }}</strong></td>
+          <td style="font-family: monospace; font-weight: bold;">
+            {% if m.value is not none %}{{ m.value | round(4) }}{% else %}N/A{% endif %}
+          </td>
+          <td>{{ m.unit }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Reproducibility Context</h2>
+  <table>
+    <tr>
+      <th style="width: 30%;">Component</th>
+      <th>Specification / Location</th>
+    </tr>
+    <tr>
+      <td>TraceClean Version</td>
+      <td>{{ repro.get('version', '1.0.0-phase3') }}</td>
+    </tr>
+    <tr>
+      <td>Platform</td>
+      <td>{{ repro.get('platform') }}</td>
+    </tr>
+    <tr>
+      <td>Python Runtime</td>
+      <td style="font-family: monospace; font-size: 0.85rem;">{{ repro.get('python_version') }}</td>
+    </tr>
+    {% for harness, path in repro.get('harness_versions', {}).items() %}
+    <tr>
+      <td>{{ harness | upper }} Path</td>
+      <td style="font-family: monospace; font-size: 0.85rem; word-break: break-all;">{{ path }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  {% if run.error %}
+  <h2>Execution Error Log</h2>
+  <pre style="background: #f8f9fa; padding: 1rem; border: 1px solid #ddd; overflow-x: auto; font-family: monospace; font-size: 0.85rem; color: #721c24;">{{ run.error }}</pre>
+  {% endif %}
+
+  <div class="disclosure">
+    <strong>Methodology Disclosure:</strong>
+    Watermark detection scores represent statistical benchmark runs using local open-source adapters (MarkLLM, reverse-SynthID, CtrlRegen). A score of zero or "Not Watermarked" does NOT certify that vendor/commercial detectors will fail to identify watermarked patterns in production. Quality metrics are computed mathematically and represent localized similarity scores only.
+  </div>
+</body>
+</html>
+
