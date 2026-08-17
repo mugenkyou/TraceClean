@@ -82,6 +82,19 @@
   }
 </style>
 
+<div class="warning-banner" style="background: rgba(15, 20, 32, 0.4); border: 1px solid var(--border-subtle); border-left: 4px solid var(--accent-cyan); display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; padding: 0.75rem 1rem; border-radius: var(--radius);">
+  <div style="font-size: 0.85rem; color: var(--text-light);">
+    <strong>Harness Setup Status:</strong>
+    {% for key, val in harness_status.items() %}
+      <span style="margin-left: 0.75rem; display: inline-flex; align-items: center; gap: 0.25rem;">
+        <span style="width: 6px; height: 6px; border-radius: 50%; background-color: {% if val.status == 'Available' %}#1ed760{% elif val.status.startswith('Partial') %}#ffc53d{% else %}#ff4d4f{% endif %}; display: inline-block;"></span>
+        {{ val.name }} ({{ val.status }})
+      </span>
+    {% endfor %}
+  </div>
+  <a href="{{ url_for('lab_status_dashboard') }}" class="btn" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Manage Status</a>
+</div>
+
 <div class="lab-grid">
   <!-- Left Column: Registered Experiments -->
   <div class="lab-card">

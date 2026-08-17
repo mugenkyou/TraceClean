@@ -1,0 +1,221 @@
+{% extends "lab_base.html" %}
+
+{% block lab_content %}
+<style>
+  .status-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+  }
+  @media (min-width: 768px) {
+    .status-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+  .status-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+  }
+  .status-name {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #fff;
+  }
+  .harness-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .badge-available {
+    background: rgba(30, 215, 96, 0.15);
+    color: #1ed760;
+  }
+  .badge-missing {
+    background: rgba(255, 77, 79, 0.15);
+    color: #ff4d4f;
+  }
+  .badge-partial {
+    background: rgba(255, 197, 61, 0.15);
+    color: #ffc53d;
+  }
+  .badge-error {
+    background: rgba(255, 77, 79, 0.25);
+    color: #ff4d4f;
+    border: 1px solid #ff4d4f;
+  }
+  .check-list {
+    list-style: none;
+    padding: 0;
+    margin: 1rem 0;
+    font-size: 0.85rem;
+  }
+  .check-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+    color: var(--text-light);
+  }
+  .check-icon {
+    font-size: 0.9rem;
+  }
+  .check-yes {
+    color: #1ed760;
+  }
+  .check-no {
+    color: var(--text-dim);
+  }
+  .info-label {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.15rem;
+  }
+  .info-val {
+    font-size: 0.85rem;
+    color: var(--text-light);
+    margin-bottom: 0.75rem;
+    word-break: break-all;
+  }
+  .log-console {
+    background: #090d16;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    padding: 1rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: #a5b4fc;
+    height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    margin-top: 1rem;
+  }
+  .warning-banner {
+    background: rgba(255, 197, 61, 0.1);
+    border-left: 4px solid #ffc53d;
+    padding: 1rem;
+    border-radius: 0 var(--radius) var(--radius) 0;
+    margin-bottom: 2rem;
+    color: var(--text-light);
+    font-size: 0.85rem;
+  }
+</style>
+
+<div class="warning-banner">
+  <strong><span class="check-icon" style="color: #ffc53d;">⚠️</span> ML Dependencies & Model Weights Disclosure:</strong>
+  Initializing watermarking harnesses downloads upstream repositories, pins virtual environment packages, and fetches multi-gigabyte neural network model weights (e.g. Opt causal models or Stable Diffusion autoencoders). These downloads may take several minutes depending on network bandwidth and consume substantial local disk storage. Downloads are performed transparently without telemetry collection.
+</div>
+
+<div class="status-grid">
+  {% for key, val in status.items() %}
+  <div class="status-card">
+    <div>
+      <div class="status-header">
+        <span class="status-name">{{ val.name }}</span>
+        <span class="harness-badge badge-{{ val.status.split(' ')[0].lower() }}">{{ val.status }}</span>
+      </div>
+      
+      <p style="font-size: 0.8rem; color: var(--text-dim); margin-top: 0; margin-bottom: 1rem;">{{ val.purpose }}</p>
+
+      <div class="info-label">Environment Variable</div>
+      <div class="info-val" style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600;">${{ val.env_var }}</div>
+
+      <div class="info-label">Configured Path</div>
+      <div class="info-val" style="font-family: var(--font-mono); font-size: 0.75rem;">{{ val.path }}</div>
+
+      <ul class="check-list">
+        <li class="check-item">
+          <span class="check-icon {% if val.repo_installed %}check-yes{% else %}check-no{% endif %}">
+            {% if val.repo_installed %}✓{% else %}✗{% endif %}
+          </span>
+          Repository Checkout
+        </li>
+        <li class="check-item">
+          <span class="check-icon {% if val.deps_installed %}check-yes{% else %}check-no{% endif %}">
+            {% if val.deps_installed %}✓{% else %}✗{% endif %}
+          </span>
+          Python Dependencies
+        </li>
+        <li class="check-item">
+          <span class="check-icon {% if val.model_downloaded %}check-yes{% else %}check-no{% endif %}">
+            {% if val.model_downloaded %}✓{% else %}✗{% endif %}
+          </span>
+          Model Weights Cache
+        </li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="info-label" style="margin-top: 0.5rem;">Experiment Types</div>
+      <div style="font-size: 0.8rem; color: #fff; margin-bottom: 0.5rem;">{{ val.experiment_types }}</div>
+      <div class="info-label">Expected Size</div>
+      <div style="font-size: 0.8rem; color: var(--text-dim);">{{ val.approx_size }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="lab-card" style="margin-bottom: 2rem;">
+  <div class="lab-card-title">
+    <span>Interactive Initialization Console</span>
+    <form action="{{ url_for('lab_status_initialize') }}" method="POST" id="init-form" style="margin: 0;">
+      <button type="submit" class="btn" style="background: var(--accent-cyan); color: #000; font-weight: 600; font-size: 0.85rem; padding: 0.4rem 1rem;">
+        Initialize Lab
+      </button>
+    </form>
+  </div>
+  
+  <p style="font-size: 0.85rem; color: var(--text-dim); margin-top: 0;">
+    Clicking "Initialize Lab" triggers the local execution of the PowerShell setup script (or shell script on Unix). The script will clone MarkLLM, apply sparse checkouts, establish virtual environments, and install required python modules. Log messages are captured below.
+  </p>
+
+  <div class="log-console" id="log-display">No initialization log recorded yet. Click "Initialize Lab" to start.</div>
+</div>
+
+<script>
+  // Log polling logic
+  const logDisplay = document.getElementById("log-display");
+  let pollInterval = null;
+
+  function pollLog() {
+    fetch("{{ url_for('lab_status_log') }}")
+      .then(res => res.json())
+      .then(data => {
+        if (data.log && data.log.trim() !== "") {
+          logDisplay.textContent = data.log;
+          // Auto-scroll to bottom
+          logDisplay.scrollTop = logDisplay.scrollHeight;
+        }
+      })
+      .catch(err => console.error("Log fetch error:", err));
+  }
+
+  document.getElementById("init-form").addEventListener("submit", function() {
+    logDisplay.textContent = "Spawning initialization scripts...\nPolling logs in real-time...";
+    if (!pollInterval) {
+      pollInterval = setInterval(pollLog, 1500);
+    }
+  });
+
+  // Start polling on load if log has active content
+  pollLog();
+  // Keep polling if log exists
+  setInterval(pollLog, 3000);
+</script>
+{% endblock %}

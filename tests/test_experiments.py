@@ -44,6 +44,7 @@ from provenance.metrics import (
 from provenance.experiments import (
     validate_config,
     run_pipeline,
+    get_harness_status,
 )
 from web.app import app
 
@@ -379,3 +380,119 @@ def test_web_routes():
     res = client.get("/lab/experiment/create")
     assert res.status_code == 200
     assert b"New Experiment configuration" in res.data
+
+
+# =====================================================================
+# Progress, Status, Metrics, & Error Tests
+# =====================================================================
+
+def test_progress_state_transitions(temp_db):
+    from provenance.db import get_experiment_run, update_run_progress, save_experiment_run, save_experiment
+    run_id = "test-progress-run-1"
+    save_experiment("exp-1", "Mock Exp 1", "{}", time.time(), db_path=temp_db)
+    save_experiment_run(
+        run_id=run_id,
+        experiment_id="exp-1",
+        started_at=time.time(),
+        finished_at=None,
+        status="running",
+        device="cpu",
+        input_hash=None,
+        configuration_hash="cfg-123",
+        error=None,
+        reproducibility_json="{}",
+        db_path=temp_db,
+    )
+    
+    # 1. Update to first stage
+    update_run_progress(run_id, "Loading Model", 15, "Loading opt model weights", db_path=temp_db)
+    run = get_experiment_run(run_id, db_path=temp_db)
+    assert run["current_stage"] == "Loading Model"
+    assert run["stage_percentage"] == 15
+    assert run["stage_status"] == "Loading opt model weights"
+
+    # 2. Update to second stage
+    update_run_progress(run_id, "Running Attack", 65, "Executing paraphrase rewrite", db_path=temp_db)
+    run = get_experiment_run(run_id, db_path=temp_db)
+    assert run["current_stage"] == "Running Attack"
+    assert run["stage_percentage"] == 65
+    assert run["stage_status"] == "Executing paraphrase rewrite"
+
+
+def test_harness_status_detection():
+    status = get_harness_status()
+    assert "markllm" in status
+    assert "synthid" in status
+    assert "ctrlregen" in status
+    for h in status.values():
+        assert "name" in h
+        assert "status" in h
+        assert "env_var" in h
+        assert "path" in h
+
+
+def test_failed_execution_handling(temp_db):
+    from provenance.db import save_experiment
+    run_id = "test-fail-run-1"
+    config = {
+        "experiment": {"name": "Fail Test"},
+        "input": {"type": "prompt", "content": "Original content"},
+        "watermark": {
+            "family": "text",
+            "method": "kgw",
+            "parameters": {"model": "opt-125m"}
+        },
+        "attack": {
+            "method": "rewrite",
+            "parameters": {"backend": "invalid-backend-name"}
+        }
+    }
+    
+    save_experiment("exp-fail", "Fail Test", json.dumps(config), time.time())
+    
+    # Run pipeline where we expect failure due to invalid backend
+    run_pipeline(run_id, "exp-fail", config)
+    
+    from provenance.db import get_experiment_run
+    run = get_experiment_run(run_id)
+    assert run["status"] == "failed"
+    assert run["error"] is not None
+    assert run["current_stage"] == "Failed"
+    assert run["stage_percentage"] == 100
+
+
+def test_report_rendering_and_status_routes(temp_db):
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    # Create dummy experiment and run to render report
+    from provenance.db import save_experiment, save_experiment_run
+    save_experiment("exp-rep", "Rep Test", "{}", time.time())
+    save_experiment_run(
+        run_id="run-rep",
+        experiment_id="exp-rep",
+        started_at=time.time(),
+        finished_at=time.time() + 10,
+        status="completed",
+        device="cpu",
+        input_hash="hash-1",
+        configuration_hash="hash-2",
+        error=None,
+        reproducibility_json="{}",
+    )
+
+    # 1. Test HTML report rendering
+    res = client.get("/lab/run/run-rep/report?format=html")
+    assert res.status_code == 200
+    assert b"Experiment Audit Report" in res.data
+
+    # 2. Test JSON report rendering
+    res = client.get("/lab/run/run-rep/report?format=json")
+    assert res.status_code == 200
+    assert b"run-rep" in res.data or b"completed" in res.data
+
+    # 3. Test Harness Status UI
+    res = client.get("/lab/status")
+    assert res.status_code == 200
+    assert b"ML Dependencies" in res.data
+

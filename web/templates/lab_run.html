@@ -101,7 +101,28 @@
         <div id="pText" class="progress-text">Checking Status...</div>
       </div>
       
-      <div id="errorBox" class="error-box" style="display: none; background: rgba(255, 77, 79, 0.1); border: 1px solid rgba(255, 77, 79, 0.3); border-radius: 6px; color: #ff4d4f; padding: 0.75rem; font-size: 0.85rem; margin-top: 1rem;"></div>
+      <!-- Staged Progress Labels -->
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 0.5rem;">
+        <span style="color: var(--text-dim);">Current Stage:</span>
+        <span id="stageName" style="color: #fff; font-weight: 600;">Initializing</span>
+      </div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-top: 0.25rem;">
+        <span style="color: var(--text-dim);">Status Detail:</span>
+        <span id="stageStatus" style="color: var(--text-light);">Preparing execution environment...</span>
+      </div>
+      
+      <div id="errorBox" class="error-box" style="display: none; background: rgba(255, 77, 79, 0.1); border: 1px solid rgba(255, 77, 79, 0.3); border-radius: 6px; color: #ff4d4f; padding: 1rem; font-size: 0.85rem; margin-top: 1rem;">
+        <div style="font-weight: 700; margin-bottom: 0.5rem;" id="errorTitle">Run Execution Failed</div>
+        <div style="margin-bottom: 0.4rem;"><strong>Failed Stage:</strong> <span id="errorStage">N/A</span></div>
+        <div style="margin-bottom: 0.4rem;"><strong>Harness Involved:</strong> <span id="errorHarness">N/A</span></div>
+        <div style="margin-bottom: 0.4rem;"><strong>Error Message:</strong> <span id="errorMsg">N/A</span></div>
+        <div style="margin-bottom: 0.75rem;"><strong>Retry Action:</strong> <span style="color: var(--accent-cyan);">Possible</span> (you can re-execute from the templates catalog)</div>
+        
+        <details style="margin-top: 0.5rem; border-top: 1px solid rgba(255, 77, 79, 0.2); padding-top: 0.5rem;">
+          <summary style="cursor: pointer; font-weight: 600; color: #ff7875;">Show Technical Details / Traceback</summary>
+          <pre id="errorTraceback" style="font-family: monospace; font-size: 0.75rem; color: #ff9c9c; margin-top: 0.5rem; white-space: pre-wrap; overflow-x: auto; max-height: 200px; background: rgba(0, 0, 0, 0.2); padding: 0.5rem; border-radius: 4px; border: 1px solid rgba(255, 77, 79, 0.2);"></pre>
+        </details>
+      </div>
     </div>
 
     <div class="panel" id="metricsPanel" style="display: none;">
@@ -187,11 +208,21 @@
   const metricsBody = document.getElementById("metricsBody");
   const errorBox = document.getElementById("errorBox");
 
+  const stageName = document.getElementById("stageName");
+  const stageStatus = document.getElementById("stageStatus");
+
   function renderMetrics(metrics) {
     if (!metrics || metrics.length === 0) return;
     metricsPanel.style.display = "block";
     metricsBody.innerHTML = "";
+    
+    let scoreBefore = null;
+    let scoreAfter = null;
+    
     metrics.forEach(m => {
+      if (m.name === "detection_score_before") scoreBefore = m.value;
+      if (m.name === "detection_score_after") scoreAfter = m.value;
+      
       const val = m.value !== null ? parseFloat(m.value).toFixed(4) : "N/A";
       const row = `<tr>
         <td style="font-weight:600;">${m.name}</td>
@@ -200,6 +231,29 @@
       </tr>`;
       metricsBody.insertAdjacentHTML("beforeend", row);
     });
+    
+    if (scoreBefore !== null && scoreAfter !== null) {
+      const change = scoreAfter - scoreBefore;
+      let reduction = "N/A";
+      if (scoreBefore !== 0) {
+        const pct = ((scoreBefore - scoreAfter) / scoreBefore) * 100;
+        reduction = pct.toFixed(2) + "%";
+      }
+      
+      const changeRow = `<tr>
+        <td style="font-weight:600;">detection_score_delta</td>
+        <td style="font-family:monospace; color:#ffc53d; font-weight:600;">${change.toFixed(4)}</td>
+        <td style="color:var(--text-dim);">score</td>
+      </tr>`;
+      const reductionRow = `<tr>
+        <td style="font-weight:600;">detection_score_reduction</td>
+        <td style="font-family:monospace; color:#1ed760; font-weight:600;">${reduction}</td>
+        <td style="color:var(--text-dim);">percentage</td>
+      </tr>`;
+      
+      metricsBody.insertAdjacentHTML("beforeend", changeRow);
+      metricsBody.insertAdjacentHTML("beforeend", reductionRow);
+    }
   }
 
   function checkProgress() {
@@ -208,26 +262,49 @@
       .then(data => {
         statusVal.innerText = data.status.toUpperCase();
         
+        // Progress stage labels
+        if (data.current_stage) {
+          stageName.innerText = data.current_stage;
+        }
+        if (data.stage_status) {
+          stageStatus.innerText = data.stage_status;
+        }
+        
+        const pct = data.stage_percentage !== null ? data.stage_percentage : 0;
+        pBar.style.width = pct + "%";
+        pText.innerText = pct + "%";
+        
         if (data.status === "completed") {
           pBar.style.width = "100%";
           pBar.style.background = "#1ed760";
-          pText.innerText = "Completed Successfully";
+          pText.innerText = "100% (Completed Successfully)";
+          stageName.innerText = "Completed";
+          stageStatus.innerText = "Experiment run finished successfully.";
           renderMetrics(data.metrics);
           errorBox.style.display = "none";
         } else if (data.status === "failed") {
           pBar.style.width = "100%";
           pBar.style.background = "#ff4d4f";
           pText.innerText = "Failed";
+          stageName.innerText = "Failed";
+          stageStatus.innerText = "Execution failed.";
+          
           errorBox.style.display = "block";
-          errorBox.innerText = data.error || "Unknown execution pipeline error.";
+          document.getElementById("errorStage").innerText = data.current_stage || "N/A";
+          document.getElementById("errorMsg").innerText = data.error || "Unknown execution pipeline error.";
+          document.getElementById("errorTraceback").innerText = data.error || "";
+          
+          // Determine harness
+          let harnessText = "MarkLLM (Text Causal Model)";
+          document.getElementById("errorHarness").innerText = harnessText;
         } else if (data.status === "running") {
-          pBar.style.width = "50%";
-          pText.innerText = "Running Pipelines (Gen / Detect / Attack)...";
           setTimeout(checkProgress, 2000);
         } else {
           // Queued
-          pBar.style.width = "15%";
-          pText.innerText = "Queued in Worker Pool...";
+          pBar.style.width = "5%";
+          pText.innerText = "Queued";
+          stageName.innerText = "Queued";
+          stageStatus.innerText = "Waiting in task queue pool...";
           setTimeout(checkProgress, 2000);
         }
       })
@@ -237,7 +314,6 @@
       });
   }
 
-  // Start polling immediately
   checkProgress();
 </script>
 {% endblock %}

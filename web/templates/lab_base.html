@@ -40,7 +40,8 @@
 
   <div class="lab-nav">
     <a href="{{ url_for('lab_index') }}" class="lab-nav-item {% if request.path == '/lab' %}active{% endif %}">Experiments &amp; Sweeps</a>
-    <a href="{{ url_for('lab_experiment_create') }}" class="lab-nav-item {% if request.path == '/lab/experiment/create' %}active{% endif %}">New Experiment config</a>
+    <a href="{{ url_for('lab_experiment_create') }}" class="lab-nav-item {% if request.path == '/lab/experiment/create' %}active{% endif %}">New Config</a>
+    <a href="{{ url_for('lab_status_dashboard') }}" class="lab-nav-item {% if request.path == '/lab/status' %}active{% endif %}">Harness Status &amp; Initialization</a>
   </div>
 
   <!-- Content Injection -->

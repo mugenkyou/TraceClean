@@ -21,6 +21,7 @@ import yaml
 from provenance.db import (
     save_experiment_run,
     save_run_metrics,
+    update_run_progress,
 )
 from provenance.metrics import (
     compute_lexical_divergence,
@@ -191,6 +192,9 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
         configuration_hash=config_hash,
         error=None,
         reproducibility_json=json.dumps(reproducibility),
+        current_stage="Initializing",
+        stage_percentage=0,
+        stage_status="Resolving inputs and setting up logs"
     )
 
     try:
@@ -218,14 +222,15 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
         # Run text or image pipeline
         wm_family = config["watermark"]["family"]
         if wm_family == "text":
-            metrics = _run_text_pipeline(input_text, config)
+            metrics = _run_text_pipeline(input_text, config, run_id=run_id)
         else:
-            metrics = _run_image_pipeline(input_bytes, config)
+            metrics = _run_image_pipeline(input_bytes, config, run_id=run_id)
 
         finished_at = time.time()
         metrics.append({"name": "runtime", "value": finished_at - started_at, "unit": "seconds"})
 
         # Update run as completed
+        update_run_progress(run_id, "Persisting Results", 95, "Saving database metrics and generating final reports")
         save_experiment_run(
             run_id=run_id,
             experiment_id=experiment_id,
@@ -237,6 +242,9 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
             configuration_hash=config_hash,
             error=None,
             reproducibility_json=json.dumps(reproducibility),
+            current_stage="Completed",
+            stage_percentage=100,
+            stage_status="Completed Successfully"
         )
         save_run_metrics(run_id, metrics)
 
@@ -254,13 +262,22 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
             configuration_hash=config_hash,
             error=str(e),
             reproducibility_json=json.dumps(reproducibility),
+            current_stage="Failed",
+            stage_percentage=100,
+            stage_status=f"Stage execution error: {str(e)}"
         )
 
 
-def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str, Any]]:
+def _run_text_pipeline(input_text: str, config: dict[str, Any], run_id: str | None = None) -> list[dict[str, Any]]:
     """Execute text watermark generation, before-detection, rewrite attack, and after-detection."""
     wm_sec = config["watermark"]
     att_sec = config["attack"]
+    
+    def report_progress(stage: str, percentage: int, stage_status: str):
+        if run_id:
+            update_run_progress(run_id, stage, percentage, stage_status)
+
+    report_progress("Loading Model", 15, "Loading HF causal LM model weights for scoring")
     
     markllm_dir = os.environ.get("MARKLLM_DIR")
     if not markllm_dir:
@@ -275,6 +292,7 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
 
     # Step 1: Watermark Generation (or use input text if it's already watermarked)
     if config["input"]["type"] == "prompt":
+        report_progress("Generating Watermarked Content", 30, "Invoking AutoWatermark to generate marked text")
         cmd_gen = [
             py_exe, detect_script, "watermark", "-",
             "--scheme", wm_sec["method"],
@@ -298,9 +316,11 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
         watermarked_path = Path(gen_payload["watermarked_output"])
         watermarked_text = watermarked_path.read_text("utf-8")
     else:
+        report_progress("Generating Watermarked Content", 30, "Skipped generation: using pre-watermarked text input")
         watermarked_text = input_text
 
     # Step 2: Detect Before
+    report_progress("Pre-Attack Detection", 50, "Evaluating baseline watermark strength before rewrite")
     cmd_det_before = [
         py_exe, detect_script, "detect", "-",
         "--scheme", wm_sec["method"],
@@ -318,6 +338,7 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
     score_before = before_payload.get("score")
 
     # Step 3: Rewrite Attack
+    report_progress("Running Attack", 65, "Executing LLM rewrite attack via backend API")
     rewrite_script = str(SCRIPTS_DIR / "rewrite_text.py")
     cmd_rew = [
         sys.executable, rewrite_script, "-",
@@ -337,6 +358,7 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
     rewritten_text = _run_subprocess(cmd_rew, input_data=watermarked_text)
 
     # Step 4: Detect After
+    report_progress("Post-Attack Detection", 80, "Evaluating remaining watermark strength after rewrite")
     cmd_det_after = [
         py_exe, detect_script, "detect", "-",
         "--scheme", wm_sec["method"],
@@ -353,6 +375,7 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
     score_after = after_payload.get("score")
 
     # Step 5: Lexical / Semantic metrics
+    report_progress("Calculating Metrics", 90, "Computing Jaccard bigram divergence and semantic similarities")
     lexical_div = compute_lexical_divergence(watermarked_text, rewritten_text)
     semantic_sim = compute_semantic_similarity(watermarked_text, rewritten_text)
 
@@ -367,10 +390,16 @@ def _run_text_pipeline(input_text: str, config: dict[str, Any]) -> list[dict[str
     return metrics
 
 
-def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict[str, Any]]:
+def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any], run_id: str | None = None) -> list[dict[str, Any]]:
     """Execute image watermark generation, before-detection, purification/ctrlregen attack, and after-detection."""
     wm_sec = config["watermark"]
     att_sec = config["attack"]
+    
+    def report_progress(stage: str, percentage: int, stage_status: str):
+        if run_id:
+            update_run_progress(run_id, stage, percentage, stage_status)
+
+    report_progress("Loading Model", 15, "Loading Stable Diffusion / SynthID extraction weights")
     
     markdiff_dir = os.environ.get("MARKDIFFUSION_DIR")
     synthid_dir = os.environ.get("REVERSE_SYNTHID_DIR")
@@ -379,6 +408,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict
     # Step 1: Image Watermarking
     # If the input type is a prompt, we must use MarkDiffusion to generate the image
     if config["input"]["type"] == "prompt":
+        report_progress("Generating Watermarked Content", 30, "Generating watermarked image using MarkDiffusion")
         if not markdiff_dir:
             raise RuntimeError("Watermark Lab Error: MARKDIFFUSION_DIR is not configured for prompt image generation.")
         
@@ -405,10 +435,12 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict
         watermarked_path = Path(gen_payload["watermarked_output"])
         watermarked_bytes = watermarked_path.read_bytes()
     else:
+        report_progress("Generating Watermarked Content", 30, "Skipped generation: using pre-watermarked image input")
         watermarked_bytes = input_bytes
 
     # Step 2: Score Before Attack
     # We can detect using SynthID or MarkDiffusion detector depending on config
+    report_progress("Pre-Attack Detection", 50, "Measuring baseline watermark score on raw input")
     is_synthid = wm_sec["method"].lower() == "synthid"
     
     if is_synthid:
@@ -462,6 +494,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict
                 temp_img_before.unlink()
 
     # Step 3: Apply Attack
+    report_progress("Running Attack", 65, "Executing VAE/Diffusion regeneration pixel attack")
     temp_img_before = SCRIPTS_DIR / f"temp_before_{time.time()}.png"
     temp_img_before.write_bytes(watermarked_bytes)
     
@@ -518,6 +551,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict
             temp_img_before.unlink()
 
     # Step 4: Score After Attack
+    report_progress("Post-Attack Detection", 80, "Measuring remaining watermark score after attack")
     temp_img_after_detect = SCRIPTS_DIR / f"temp_after_detect_{time.time()}.png"
     temp_img_after_detect.write_bytes(cleaned_bytes)
     
@@ -556,6 +590,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any]) -> list[dict
             temp_img_after.unlink()
 
     # Step 5: Compute Quality metrics
+    report_progress("Calculating Metrics", 90, "Computing PSNR, SSIM, and LPIPS quality metrics")
     psnr = compute_psnr(watermarked_bytes, cleaned_bytes)
     ssim = compute_ssim(watermarked_bytes, cleaned_bytes)
     lpips_dist = compute_lpips(watermarked_bytes, cleaned_bytes)
@@ -589,3 +624,120 @@ def get_active_run_futures() -> dict[str, concurrent.futures.Future]:
     for rid in completed:
         _active_runs.pop(rid, None)
     return _active_runs
+
+
+def get_harness_status() -> dict[str, Any]:
+    """Detect the presence, version, and dependencies of external watermarking harnesses."""
+    markllm_dir = os.environ.get("MARKLLM_DIR")
+    synthid_dir = os.environ.get("REVERSE_SYNTHID_DIR")
+    ctrlregen_dir = os.environ.get("NOAI_WATERMARK_DIR")
+    
+    status = {
+        "markllm": {
+            "name": "MarkLLM",
+            "purpose": "Text watermark generation/detection",
+            "env_var": "MARKLLM_DIR",
+            "path": markllm_dir or "Not configured",
+            "repo_installed": False,
+            "deps_installed": False,
+            "model_downloaded": False,
+            "status": "Missing",
+            "experiment_types": "Text watermark sweeps (KGW, SynthID text)",
+            "approx_size": "~1.5 GB repo + deps; ~250 MB model (opt-125m)",
+        },
+        "synthid": {
+            "name": "reverse-SynthID",
+            "purpose": "Image pixel SynthID scoring",
+            "env_var": "REVERSE_SYNTHID_DIR",
+            "path": synthid_dir or "Not configured",
+            "repo_installed": False,
+            "deps_installed": False,
+            "model_downloaded": False,
+            "status": "Missing",
+            "experiment_types": "Image watermark score (SynthID pixel)",
+            "approx_size": "~300 MB repo + deps + codebooks",
+        },
+        "ctrlregen": {
+            "name": "CtrlRegen",
+            "purpose": "Image watermark purification/removal",
+            "env_var": "NOAI_WATERMARK_DIR",
+            "path": ctrlregen_dir or "Not configured",
+            "repo_installed": False,
+            "deps_installed": False,
+            "model_downloaded": False,
+            "status": "Missing",
+            "experiment_types": "Image watermark purification attack",
+            "approx_size": "~5 GB repo + weights",
+        }
+    }
+    
+    # 1. Check MarkLLM
+    if markllm_dir:
+        p = Path(markllm_dir).expanduser().resolve()
+        if p.is_dir() and (p / "watermark").is_dir():
+            status["markllm"]["repo_installed"] = True
+            py_exe = _get_python_executable(str(p))
+            try:
+                subprocess.run([py_exe, "-c", "import torch, transformers, datasets"], capture_output=True, check=True)
+                status["markllm"]["deps_installed"] = True
+            except Exception:
+                pass
+            
+            # Check model cache
+            cache_dir = Path.home() / ".cache" / "huggingface" / "hub"
+            if any(cache_dir.glob("models--facebook--opt-*")):
+                status["markllm"]["model_downloaded"] = True
+            
+            if status["markllm"]["deps_installed"]:
+                status["markllm"]["status"] = "Available"
+            else:
+                status["markllm"]["status"] = "Partial (Missing dependencies)"
+        else:
+            status["markllm"]["status"] = "Error (Invalid directory)"
+            
+    # 2. Check SynthID
+    if synthid_dir:
+        p = Path(synthid_dir).expanduser().resolve()
+        if p.is_dir() and (p / "src").is_dir():
+            status["synthid"]["repo_installed"] = True
+            py_exe = _get_python_executable(str(p))
+            try:
+                subprocess.run([py_exe, "-c", "import cv2, robust_extractor"], capture_output=True, check=True)
+                status["synthid"]["deps_installed"] = True
+            except Exception:
+                pass
+            
+            # Codebook check
+            if (p / "artifacts" / "spectral_codebook_v4.npz").is_file():
+                status["synthid"]["model_downloaded"] = True
+                
+            if status["synthid"]["deps_installed"] and status["synthid"]["model_downloaded"]:
+                status["synthid"]["status"] = "Available"
+            elif status["synthid"]["repo_installed"]:
+                status["synthid"]["status"] = "Partial"
+        else:
+            status["synthid"]["status"] = "Error (Invalid directory)"
+
+    # 3. Check CtrlRegen
+    if ctrlregen_dir:
+        p = Path(ctrlregen_dir).expanduser().resolve()
+        if p.is_dir() and (p / "src").is_dir():
+            status["ctrlregen"]["repo_installed"] = True
+            py_exe = _get_python_executable(str(p))
+            try:
+                subprocess.run([py_exe, "-c", "import torch, diffusers, ctrlregen"], capture_output=True, check=True)
+                status["ctrlregen"]["deps_installed"] = True
+            except Exception:
+                pass
+            
+            status["ctrlregen"]["model_downloaded"] = True  # assume yes for metadata status if installed
+            
+            if status["ctrlregen"]["deps_installed"]:
+                status["ctrlregen"]["status"] = "Available"
+            else:
+                status["ctrlregen"]["status"] = "Partial"
+        else:
+            status["ctrlregen"]["status"] = "Error (Invalid directory)"
+            
+    return status
+

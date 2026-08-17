@@ -94,10 +94,23 @@ def init_db(db_path: Path = DB_PATH) -> None:
                     configuration_hash TEXT NOT NULL,
                     error TEXT,
                     reproducibility_json TEXT NOT NULL,
+                    current_stage TEXT,
+                    stage_percentage INTEGER,
+                    stage_status TEXT,
                     FOREIGN KEY (experiment_id) REFERENCES experiments (id) ON DELETE CASCADE
                 )
                 """
             )
+
+            # Ensure columns exist for dynamic upgrading
+            cursor = conn.execute("PRAGMA table_info(experiment_runs)")
+            columns = [r["name"] for r in cursor.fetchall()]
+            if "current_stage" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN current_stage TEXT")
+            if "stage_percentage" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN stage_percentage INTEGER")
+            if "stage_status" not in columns:
+                conn.execute("ALTER TABLE experiment_runs ADD COLUMN stage_status TEXT")
 
             conn.execute(
                 """
@@ -348,6 +361,9 @@ def save_experiment_run(
     configuration_hash: str,
     error: str | None,
     reproducibility_json: str,
+    current_stage: str | None = None,
+    stage_percentage: int | None = None,
+    stage_status: str | None = None,
     db_path: Path = DB_PATH,
 ) -> None:
     """Insert or replace an experiment run record."""
@@ -355,12 +371,28 @@ def save_experiment_run(
     conn = get_connection(db_path)
     try:
         with conn:
+            # First, check if run exists to preserve progress info if not provided
+            existing = conn.execute(
+                "SELECT current_stage, stage_percentage, stage_status FROM experiment_runs WHERE id = ?",
+                (run_id,)
+            ).fetchone()
+            
+            c_stage = current_stage
+            s_pct = stage_percentage
+            s_stat = stage_status
+            
+            if existing:
+                if c_stage is None: c_stage = existing["current_stage"]
+                if s_pct is None: s_pct = existing["stage_percentage"]
+                if s_stat is None: s_stat = existing["stage_status"]
+
             conn.execute(
                 """
                 INSERT OR REPLACE INTO experiment_runs (
                     id, experiment_id, started_at, finished_at, status, device,
-                    input_hash, configuration_hash, error, reproducibility_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    input_hash, configuration_hash, error, reproducibility_json,
+                    current_stage, stage_percentage, stage_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -373,6 +405,9 @@ def save_experiment_run(
                     configuration_hash,
                     error,
                     reproducibility_json,
+                    c_stage,
+                    s_pct,
+                    s_stat,
                 ),
             )
     finally:
@@ -491,4 +526,40 @@ def list_benchmarks(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def update_run_progress(
+    run_id: str,
+    stage: str,
+    percentage: int,
+    stage_status: str,
+    error: str | None = None,
+    db_path: Path = DB_PATH,
+) -> None:
+    """Update progress metrics of a running experiment."""
+    init_db(db_path)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            if error:
+                conn.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET current_stage = ?, stage_percentage = ?, stage_status = ?, error = ?
+                    WHERE id = ?
+                    """,
+                    (stage, percentage, stage_status, error, run_id),
+                )
+            else:
+                conn.execute(
+                    """
+                    UPDATE experiment_runs
+                    SET current_stage = ?, stage_percentage = ?, stage_status = ?
+                    WHERE id = ?
+                    """,
+                    (stage, percentage, stage_status, run_id),
+                )
+    finally:
+        conn.close()
+
 

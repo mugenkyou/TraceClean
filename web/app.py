@@ -61,7 +61,7 @@ from provenance.reports.html_report import generate_html_report
 from provenance.reports.json_report import generate_json_report
 from provenance.reports.zip_export import build_batch_zip
 from provenance.schema import Finding, ProvenanceScanResult, ProvenanceScore
-from provenance.experiments import validate_config, queue_experiment_run, get_active_run_futures
+from provenance.experiments import validate_config, queue_experiment_run, get_active_run_futures, get_harness_status
 
 app = Flask(
     __name__,
@@ -555,6 +555,7 @@ def lab_index() -> str:
     runs = list_experiment_runs()
     benchmarks = list_benchmarks()
     active_futures = get_active_run_futures()
+    harness_status = get_harness_status()
     
     # Enrich runs with experiment names
     enriched_runs = []
@@ -570,7 +571,60 @@ def lab_index() -> str:
         experiments=experiments,
         runs=enriched_runs,
         benchmarks=benchmarks,
+        harness_status=harness_status,
     )
+
+
+@app.route("/lab/status", methods=["GET"])
+def lab_status_dashboard() -> str:
+    """Show details of local ML harnesses and initialization actions."""
+    status_dict = get_harness_status()
+    log_content = ""
+    log_path = ROOT_DIR / "scratch" / "init_lab.log"
+    if log_path.is_file():
+        try:
+            log_content = log_path.read_text("utf-8")
+        except Exception:
+            pass
+    return render_template("lab_status.html", status=status_dict, log_content=log_content)
+
+
+@app.route("/lab/status/initialize", methods=["POST"])
+def lab_status_initialize() -> Response:
+    """Triggers the asynchronous initialization process of the watermarking harnesses."""
+    log_dir = ROOT_DIR / "scratch"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / "init_lab.log"
+    
+    script_path = ROOT_DIR / "service" / "scripts" / "setup_markllm.ps1"
+    
+    if os.name == "nt":
+        cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+    else:
+        script_sh = ROOT_DIR / "service" / "scripts" / "setup_markllm.sh"
+        cmd = ["bash", str(script_sh)]
+        
+    try:
+        f_log = open(log_file, "w", encoding="utf-8")
+        subprocess.Popen(cmd, stdout=f_log, stderr=subprocess.STDOUT)
+    except Exception as e:
+        log_file.write_text(f"Initialization trigger error: {e}", encoding="utf-8")
+        
+    return redirect(url_for("lab_status_dashboard"))
+
+
+@app.route("/lab/status/log", methods=["GET"])
+def lab_status_log() -> Response:
+    """Return JSON containing the current content of the initialization log."""
+    log_path = ROOT_DIR / "scratch" / "init_lab.log"
+    content = ""
+    if log_path.is_file():
+        try:
+            content = log_path.read_text("utf-8")
+        except Exception:
+            pass
+    return make_response(json.dumps({"log": content}), 200, {"Content-Type": "application/json"})
+
 
 
 @app.route("/lab/experiment/create", methods=["GET", "POST"])
@@ -685,6 +739,9 @@ def lab_run_progress(run_id: str) -> Response:
             "status": run["status"],
             "error": run["error"],
             "finished_at": run["finished_at"],
+            "current_stage": run.get("current_stage"),
+            "stage_percentage": run.get("stage_percentage"),
+            "stage_status": run.get("stage_status"),
             "metrics": metrics,
         }),
         200,
