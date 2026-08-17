@@ -38,18 +38,44 @@ from common import MAX_INPUT_BYTES
 from engine import capabilities, clean_bytes, inspect_bytes
 from session import FileSession, start_janitor
 
+import uuid
 from provenance.batch import run_batch_scan
-from provenance.db import delete_scan as delete_db_scan, get_scan as get_db_scan, list_scans as list_db_scans, save_scan as save_db_scan
+from provenance.db import (
+    delete_scan as delete_db_scan,
+    get_scan as get_db_scan,
+    list_scans as list_db_scans,
+    save_scan as save_db_scan,
+    save_experiment,
+    get_experiment,
+    list_experiments,
+    delete_experiment,
+    save_experiment_run,
+    get_experiment_run,
+    list_experiment_runs,
+    delete_experiment_run,
+    get_run_metrics,
+    list_benchmarks,
+    save_benchmark,
+)
 from provenance.reports.html_report import generate_html_report
 from provenance.reports.json_report import generate_json_report
 from provenance.reports.zip_export import build_batch_zip
 from provenance.schema import Finding, ProvenanceScanResult, ProvenanceScore
+from provenance.experiments import validate_config, queue_experiment_run, get_active_run_futures
 
 app = Flask(
     __name__,
     template_folder="templates",
     static_folder="static",
 )
+
+# Template filter for formatting UNIX timestamps
+@app.template_filter("datetimeformat")
+def datetimeformat_filter(value: float, format_str: str = "%Y-%m-%d %H:%M:%S") -> str:
+    try:
+        return time.strftime(format_str, time.localtime(value))
+    except Exception:
+        return str(value)
 
 # 256 MB max upload cap at Flask layer
 app.config["MAX_CONTENT_LENGTH"] = MAX_INPUT_BYTES
@@ -515,6 +541,249 @@ def api_v1_get_report(scan_id: str) -> Response:
         json_content = generate_json_report(scan)
         resp = make_response(json_content, 200)
         resp.headers["Content-Type"] = "application/json; charset=utf-8"
+        return resp
+
+
+# =====================================================================
+# Phase 3 — Watermark Lab Web Routes
+# =====================================================================
+
+@app.route("/lab", methods=["GET"])
+def lab_index() -> str:
+    """List experiments, runs, active futures, and benchmarks."""
+    experiments = list_experiments()
+    runs = list_experiment_runs()
+    benchmarks = list_benchmarks()
+    active_futures = get_active_run_futures()
+    
+    # Enrich runs with experiment names
+    enriched_runs = []
+    for r in runs:
+        exp = get_experiment(r["experiment_id"])
+        r_dict = dict(r)
+        r_dict["experiment_name"] = exp["name"] if exp else "Unknown"
+        r_dict["is_active"] = r["id"] in active_futures
+        enriched_runs.append(r_dict)
+
+    return render_template(
+        "lab_list.html",
+        experiments=experiments,
+        runs=enriched_runs,
+        benchmarks=benchmarks,
+    )
+
+
+@app.route("/lab/experiment/create", methods=["GET", "POST"])
+def lab_experiment_create() -> Response | str:
+    """Create a new experiment configuration."""
+    if request.method == "POST":
+        config_str = request.form.get("config_str", "").strip()
+        if "config_file" in request.files:
+            f = request.files["config_file"]
+            if f.filename:
+                config_str = f.read().decode("utf-8")
+
+        if not config_str:
+            return render_template("lab_create.html", error="No configuration provided.")
+
+        try:
+            config = validate_config(config_str)
+        except ValueError as e:
+            return render_template("lab_create.html", error=str(e), config_str=config_str)
+
+        exp_id = f"exp-{uuid.uuid4().hex[:12]}"
+        save_experiment(exp_id, config["experiment"]["name"], json.dumps(config), time.time())
+        return redirect(url_for("lab_index"))
+
+    return render_template("lab_create.html")
+
+
+@app.route("/lab/experiment/<exp_id>/delete", methods=["POST"])
+def lab_experiment_delete(exp_id: str) -> Response:
+    """Delete an experiment definition and cascading runs."""
+    delete_experiment(exp_id)
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/experiment/<exp_id>/run", methods=["POST"])
+def lab_experiment_run(exp_id: str) -> Response | str:
+    """Launch an experiment, generating one or more runs (if sweep is specified)."""
+    exp = get_experiment(exp_id)
+    if not exp:
+        return render_template("error.html", error="Experiment not found."), 404
+
+    config = json.loads(exp["configuration_json"])
+    sweep_sec = config.get("sweep")
+    runs_to_start = []
+
+    if sweep_sec:
+        param_path = sweep_sec["parameter"]
+        sweep_values = sweep_sec["values"]
+        path_keys = param_path.split(".")
+
+        def set_nested(d, path_keys, val):
+            current = d
+            for key in path_keys[:-1]:
+                current = current.setdefault(key, {})
+            current[path_keys[-1]] = val
+
+        for val in sweep_values:
+            import copy
+            sweep_config = copy.deepcopy(config)
+            try:
+                set_nested(sweep_config, path_keys, val)
+                # Keep tracking metadata about this sweep step
+                sweep_config["experiment"]["name"] = f"{config['experiment']['name']} ({param_path}={val})"
+            except Exception:
+                pass
+            runs_to_start.append(sweep_config)
+    else:
+        runs_to_start.append(config)
+
+    for run_config in runs_to_start:
+        run_id = f"run-{uuid.uuid4().hex[:12]}"
+        queue_experiment_run(run_id, exp_id, run_config)
+
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/run/<run_id>", methods=["GET"])
+def lab_run_detail(run_id: str) -> Response | str:
+    """View details, reproducibility logs, and metrics of a run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Experiment run not found."), 404
+
+    exp = get_experiment(run["experiment_id"])
+    metrics = get_run_metrics(run_id)
+    
+    # Try parsing metadata
+    try:
+        repro = json.loads(run["reproducibility_json"])
+    except Exception:
+        repro = {}
+
+    return render_template(
+        "lab_run.html",
+        run=run,
+        experiment=exp,
+        metrics=metrics,
+        repro=repro,
+    )
+
+
+@app.route("/lab/run/<run_id>/progress", methods=["GET"])
+def lab_run_progress(run_id: str) -> Response:
+    """AJAX progress endpoint returning JSON status of a run."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return make_response(json.dumps({"error": "Not found"}), 404, {"Content-Type": "application/json"})
+    
+    metrics = get_run_metrics(run_id)
+    return make_response(
+        json.dumps({
+            "status": run["status"],
+            "error": run["error"],
+            "finished_at": run["finished_at"],
+            "metrics": metrics,
+        }),
+        200,
+        {"Content-Type": "application/json"},
+    )
+
+
+@app.route("/lab/run/<run_id>/delete", methods=["POST"])
+def lab_run_delete(run_id: str) -> Response:
+    """Delete a specific run log."""
+    delete_experiment_run(run_id)
+    return redirect(url_for("lab_index"))
+
+
+@app.route("/lab/compare", methods=["GET"])
+def lab_compare() -> str:
+    """Compare multiple experiment runs side-by-side."""
+    ids_raw = request.args.get("run_ids", "")
+    if "," in ids_raw:
+        run_ids = [r.strip() for r in ids_raw.split(",") if r.strip()]
+    else:
+        run_ids = request.args.getlist("run_ids")
+
+    runs = []
+    all_metrics_set = set()
+    run_metrics_map = {}
+
+    for rid in run_ids:
+        r = get_experiment_run(rid)
+        if r:
+            exp = get_experiment(r["experiment_id"])
+            r_dict = dict(r)
+            r_dict["experiment_name"] = exp["name"] if exp else "Unknown"
+            
+            # Fetch metrics
+            metrics = get_run_metrics(rid)
+            metrics_dict = {m["name"]: m for m in metrics}
+            run_metrics_map[rid] = metrics_dict
+            
+            for mname in metrics_dict:
+                all_metrics_set.add(mname)
+            
+            runs.append(r_dict)
+
+    return render_template(
+        "lab_compare.html",
+        runs=runs,
+        metric_names=sorted(list(all_metrics_set)),
+        run_metrics_map=run_metrics_map,
+    )
+
+
+@app.route("/lab/run/<run_id>/report", methods=["GET"])
+def lab_run_report(run_id: str) -> Response | str:
+    """Download experiment run report in json or print-friendly html format."""
+    run = get_experiment_run(run_id)
+    if not run:
+        return render_template("error.html", error="Run not found."), 404
+
+    exp = get_experiment(run["experiment_id"])
+    metrics = get_run_metrics(run_id)
+    fmt = request.args.get("format", "json").lower()
+
+    if fmt == "html":
+        try:
+            repro = json.loads(run["reproducibility_json"])
+        except Exception:
+            repro = {}
+        
+        # Self-contained HTML report view
+        html_content = render_template(
+            "lab_report.html",
+            run=run,
+            experiment=exp,
+            metrics=metrics,
+            repro=repro,
+        )
+        resp = make_response(html_content, 200)
+        resp.headers["Content-Type"] = "text/html; charset=utf-8"
+        return resp
+    else:
+        # JSON output containing config, metadata, and final results
+        report_data = {
+            "run_id": run["id"],
+            "experiment_name": exp["name"] if exp else "Unknown",
+            "configuration": json.loads(exp["configuration_json"]) if exp else {},
+            "status": run["status"],
+            "device": run["device"],
+            "started_at": run["started_at"],
+            "finished_at": run["finished_at"],
+            "input_hash": run["input_hash"],
+            "configuration_hash": run["configuration_hash"],
+            "error": run["error"],
+            "reproducibility_metadata": json.loads(run["reproducibility_json"]),
+            "metrics": [{"name": m["name"], "value": m["value"], "unit": m["unit"]} for m in metrics],
+        }
+        resp = make_response(json.dumps(report_data, indent=2, ensure_ascii=False), 200)
+        resp.headers["Content-Type"] = "application/json; charset=utf-8"
+        resp.headers["Content-Disposition"] = f"attachment; filename=traceclean_lab_report_{run_id}.json"
         return resp
 
 
