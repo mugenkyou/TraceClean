@@ -124,7 +124,7 @@
         <tr>
           <td><strong>{{ m.name }}</strong></td>
           <td style="font-family: monospace; font-weight: bold;">
-            {% if m.value is not None %}{{ m.value | round(4) }}{% else %}N/A{% endif %}
+            {% if m.value is not none %}{{ m.value | round(4) }}{% else %}N/A{% endif %}
           </td>
           <td>{{ m.unit }}</td>
         </tr>
@@ -169,3 +169,4 @@
   </div>
 </body>
 </html>
+
