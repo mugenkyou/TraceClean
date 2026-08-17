@@ -2,7 +2,7 @@
 	smoke-ctrlregen bootstrap-ctrlregen docker-ctrlregen-build docker-ctrlregen-help \
 	smoke-markllm bootstrap-markllm docker-markllm-build docker-markllm-help \
 	smoke-markdiffusion bootstrap-markdiffusion docker-markdiffusion-build docker-markdiffusion-help \
-	docker-core-build docker-core-help serve compose-up compose-up-heavy compose-check \
+	docker-core-build docker-core-help serve serve-web compose-up compose-up-heavy compose-check \
 	install-skill install-cursor-text-skill clean
 
 SCRIPTS := service/scripts
@@ -95,6 +95,10 @@ docker-core-help:
 # Run the HTTP service locally (stdlib only, no Docker).
 serve:
 	$(PYTHON) $(SCRIPTS)/server.py --host 127.0.0.1 --port 8765
+
+# Run the Flask Web Application UI locally.
+serve-web:
+	$(PYTHON) web/app.py
 
 compose-up:
 	docker compose up --build -d

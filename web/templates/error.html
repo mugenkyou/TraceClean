@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+
+{% block title %}Error — TraceClean{% endblock %}
+
+{% block content %}
+<div class="result-card" style="border-color: var(--status-danger);">
+  <div class="result-icon" style="background: var(--status-danger-bg); color: var(--status-danger); border-color: rgba(239, 68, 68, 0.3);">
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="12" y1="8" x2="12" y2="12"/>
+      <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+  </div>
+
+  <h1 class="result-title" style="color: var(--status-danger);">Processing Error</h1>
+  <p class="result-desc">
+    {{ error|default('An unexpected error occurred while processing the file.') }}
+  </p>
+
+  <div style="margin-top: 2rem;">
+    <a href="{{ url_for('index') }}" class="btn-primary">
+      ← Return to File Upload
+    </a>
+  </div>
+</div>
+{% endblock %}

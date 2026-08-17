@@ -1,0 +1,280 @@
+{% extends "base.html" %}
+
+{% block title %}Batch Scanner &mdash; TraceClean{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 960px; margin: 0 auto;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+    <div>
+      <h1 style="font-size: 1.75rem; margin: 0;">Multi-File Batch Scanner</h1>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem;">
+        Inspect multiple text files, images, or documents simultaneously using TraceClean's deterministic in-process engine.
+      </p>
+    </div>
+  </div>
+
+  <form id="batch-form" action="{{ url_for('process_batch') }}" method="POST" enctype="multipart/form-data">
+    <div class="dropzone" id="batch-dropzone" style="border: 2px dashed var(--border-glow); padding: 3rem; text-align: center; border-radius: var(--radius-lg); cursor: pointer; transition: all 0.2s;">
+      <input type="file" name="files" id="batch-file-input" multiple style="display: none;">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--accent-cyan); margin-bottom: 1rem;">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      <div style="font-size: 1.1rem; font-weight: 600; color: #fff;">Select or Drag Multiple Files</div>
+      <div style="font-size: 0.85rem; color: var(--text-dim); margin-top: 0.5rem;">
+        Supports PNG, JPEG, WebP, AVIF, HEIC, PDF, DOCX, ODT, SVG, HTML, Markdown, and TXT files.
+      </div>
+      <div id="batch-file-list" style="margin-top: 1rem; font-size: 0.9rem; color: var(--accent-cyan); font-family: var(--font-mono);"></div>
+    </div>
+
+    <div style="margin-top: 1.5rem; text-align: right;">
+      <button type="submit" class="btn btn-primary" id="batch-submit-btn" disabled>
+        Start Batch Inspection &rarr;
+      </button>
+    </div>
+  </form>
+
+  <!-- Interactive Progress Display during scan -->
+  <div id="batch-loader" style="display: none; margin-top: 2rem;">
+    <div class="batch-loader-panel">
+      <h3 style="font-family: var(--font-heading); color: #fff; margin-bottom: 0.25rem;">Forensic Batch Scanning In Progress</h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">Extracting metadata assertions and analyzing steganographic carriers...</p>
+      <div class="progress-bar-wrapper">
+        <div id="batch-progress-fill" class="progress-bar-fill"></div>
+      </div>
+      <div id="batch-progress-status" style="font-size: 0.8rem; font-family: var(--font-mono); color: var(--accent-cyan); margin-bottom: 1.25rem;">0% (0 / 0 files)</div>
+      <div id="batch-queue" class="queue-list"></div>
+    </div>
+  </div>
+
+  <div id="batch-results" style="display: none; margin-top: 2.5rem; border-top: 1px solid var(--border-subtle); padding-top: 2rem;">
+    <h2 style="font-family: var(--font-heading); font-size: 1.4rem; color: #fff; margin-bottom: 1rem;">Batch Inspection Summary</h2>
+    
+    <!-- Summary Metrics grid -->
+    <div id="batch-summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+      <!-- Will be populated dynamically by JS -->
+    </div>
+
+    <!-- Download Batch Artifacts panel -->
+    <div class="forensic-panel" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; margin-bottom: 2rem; padding: 1.25rem 1.5rem;">
+      <div>
+        <h3 style="font-family: var(--font-heading); font-size: 1.05rem; color: #fff; margin: 0;">Export Batch Reports</h3>
+        <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.15rem;">Download forensic summaries and raw reports for all scanned files.</p>
+      </div>
+      <div style="display: flex; gap: 0.75rem;">
+        <a id="batch-download-json-btn" class="btn-secondary" style="font-size: 0.85rem; padding: 0.6rem 1.25rem; border-radius: var(--radius-md); text-decoration: none; cursor: pointer;">
+          JSON Summary Report
+        </a>
+        <a id="batch-download-zip-btn" class="browse-btn" style="font-size: 0.85rem; padding: 0.6rem 1.5rem; text-decoration: none; cursor: pointer;">
+          Download Zip Package &darr;
+        </a>
+      </div>
+    </div>
+
+    <h3 style="font-family: var(--font-heading); font-size: 1.2rem; color: #fff; margin-bottom: 0.75rem;">Audited Files Ledger</h3>
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left; border-bottom: 1px solid var(--border-subtle);">
+            <th style="padding: 0.75rem;">Filename</th>
+            <th style="padding: 0.75rem;">Kind</th>
+            <th style="padding: 0.75rem;">Verification Status</th>
+            <th style="padding: 0.75rem;">Score</th>
+            <th style="padding: 0.75rem;">Findings</th>
+            <th style="padding: 0.75rem; text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="batch-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+  const fileInput = document.getElementById('batch-file-input');
+  const dropzone = document.getElementById('batch-dropzone');
+  const fileList = document.getElementById('batch-file-list');
+  const submitBtn = document.getElementById('batch-submit-btn');
+  const form = document.getElementById('batch-form');
+  const loaderDiv = document.getElementById('batch-loader');
+  const resultsDiv = document.getElementById('batch-results');
+  const progressFill = document.getElementById('batch-progress-fill');
+  const progressStatus = document.getElementById('batch-progress-status');
+  const queueDiv = document.getElementById('batch-queue');
+  const summaryGrid = document.getElementById('batch-summary-cards');
+  const tbody = document.getElementById('batch-table-body');
+  
+  const zipBtn = document.getElementById('batch-download-zip-btn');
+  const jsonBtn = document.getElementById('batch-download-json-btn');
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  dropzone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--accent-cyan)';
+    dropzone.style.background = 'rgba(0, 242, 254, 0.05)';
+  });
+
+  dropzone.addEventListener('dragleave', () => {
+    dropzone.style.borderColor = 'var(--border-glow)';
+    dropzone.style.background = 'transparent';
+  });
+
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.style.borderColor = 'var(--border-glow)';
+    dropzone.style.background = 'transparent';
+    if (e.dataTransfer.files.length > 0) {
+      fileInput.files = e.dataTransfer.files;
+      updateFileList();
+    }
+  });
+
+  fileInput.addEventListener('change', updateFileList);
+
+  function updateFileList() {
+    const files = fileInput.files;
+    if (files.length === 0) {
+      fileList.textContent = '';
+      submitBtn.disabled = true;
+    } else {
+      fileList.textContent = `${files.length} file(s) selected`;
+      submitBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing Batch...';
+    
+    // Reset/Setup progress loader UI
+    loaderDiv.style.display = 'block';
+    resultsDiv.style.display = 'none';
+    progressFill.style.width = '0%';
+    
+    const files = fileInput.files;
+    progressStatus.textContent = `0% (0 / ${files.length} files)`;
+    
+    // Populate queue list in UI
+    queueDiv.innerHTML = '';
+    for (let idx = 0; idx < files.length; idx++) {
+      const qItem = document.createElement('div');
+      qItem.className = 'queue-item';
+      qItem.id = `q-file-${idx}`;
+      qItem.innerHTML = `<span>${files[idx].name}</span><span style="font-style: italic; color: var(--text-dim);">Queued</span>`;
+      queueDiv.appendChild(qItem);
+    }
+
+    // Start a fake smooth progress bar animation up to 90%
+    let currentPct = 0;
+    const progressInterval = setInterval(() => {
+      if (currentPct < 90) {
+        currentPct += Math.floor(Math.random() * 5) + 1;
+        if (currentPct > 90) currentPct = 90;
+        progressFill.style.width = `${currentPct}%`;
+        const completedCount = Math.floor((currentPct / 100) * files.length);
+        progressStatus.textContent = `${currentPct}% (${completedCount} / ${files.length} files)`;
+      }
+    }, 150);
+
+    const formData = new FormData(form);
+    try {
+      const resp = await fetch('{{ url_for("process_batch") }}', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await resp.json();
+
+      clearInterval(progressInterval);
+      progressFill.style.width = '100%';
+      progressStatus.textContent = `100% (${files.length} / ${files.length} files completed)`;
+
+      // Render summary cards
+      let compromisedCount = 0;
+      let cleanCount = 0;
+      data.items.forEach(item => {
+        if (item.verification_status === 'detected') compromisedCount++;
+        if (item.verification_status === 'not_detected') cleanCount++;
+      });
+      
+      summaryGrid.innerHTML = `
+        <div class="metric-pill">
+          <span class="metric-pill-title">Scanned Files</span>
+          <span class="metric-pill-value" style="color: var(--accent-cyan);">${data.scanned_files}</span>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-pill-title">Verified Clean</span>
+          <span class="metric-pill-value" style="color: var(--status-clean);">${cleanCount}</span>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-pill-title">Provenance Compromised</span>
+          <span class="metric-pill-value" style="color: var(--status-danger);">${compromisedCount}</span>
+        </div>
+        <div class="metric-pill">
+          <span class="metric-pill-title">Average Exposure Score</span>
+          <span class="metric-pill-value">${data.average_score !== null ? data.average_score : 'N/A'}</span>
+        </div>
+      `;
+
+      // Set download links
+      zipBtn.href = `/batch/download/zip/${data.batch_id}`;
+      
+      // JSON blob download
+      const jsonStr = JSON.stringify(data, null, 2);
+      const jsonBlob = new Blob([jsonStr], { type: 'application/json' });
+      jsonBtn.href = URL.createObjectURL(jsonBlob);
+      jsonBtn.download = `traceclean_batch_report_${data.batch_id}.json`;
+
+      // Render ledger rows
+      tbody.innerHTML = '';
+      data.items.forEach(item => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border-subtle)';
+        
+        const scoreStr = item.score && item.score.score !== null ? item.score.score : 'N/A';
+        const findingsCount = item.findings ? item.findings.length : 0;
+        
+        let statusBadge = '';
+        if (item.verification_status === 'detected') {
+          statusBadge = '<span class="badge" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(239, 68, 68, 0.2);">Compromised</span>';
+        } else if (item.verification_status === 'not_detected') {
+          statusBadge = '<span class="badge" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.2);">Clean</span>';
+        } else {
+          statusBadge = '<span class="badge" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.2);">Inconclusive</span>';
+        }
+
+        tr.innerHTML = `
+          <td style="padding: 0.75rem; font-family: var(--font-mono); color: #fff;">${item.original_filename}</td>
+          <td style="padding: 0.75rem; text-transform: uppercase; font-size: 0.75rem;">${item.kind}</td>
+          <td style="padding: 0.75rem;">${statusBadge}</td>
+          <td style="padding: 0.75rem; font-weight: 700; font-family: var(--font-mono);">${scoreStr}</td>
+          <td style="padding: 0.75rem; font-family: var(--font-mono);">${findingsCount} signal(s)</td>
+          <td style="padding: 0.75rem; text-align: right;">
+            <div style="display: flex; gap: 0.4rem; justify-content: flex-end;">
+              <a href="/history/view/${item.scan_id}" target="_blank" class="history-btn">Open Audit</a>
+              <a href="/api/v1/scan/${item.scan_id}/report?format=html" target="_blank" class="history-btn">HTML</a>
+              <a href="/api/v1/scan/${item.scan_id}/report?format=json" target="_blank" class="history-btn">JSON</a>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      setTimeout(() => {
+        loaderDiv.style.display = 'none';
+        resultsDiv.style.display = 'block';
+      }, 500);
+
+    } catch (err) {
+      clearInterval(progressInterval);
+      loaderDiv.style.display = 'none';
+      alert('Batch scan error: ' + err.message);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Start Batch Inspection \u2192';
+    }
+  });
+</script>
+{% endblock %}

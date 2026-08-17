@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Local Scan History &mdash; TraceClean{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width: 1080px; margin: 0 auto;">
+  <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem;">
+    <div>
+      <h1 style="font-size: 1.75rem; margin: 0;">Local Scan History Log</h1>
+      <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem;">
+        Local SQLite scan records (<code>contenttrace.db</code>). Metadata and findings are persisted locally without storing uploaded file bytes.
+      </p>
+    </div>
+  </div>
+
+  {% if scans %}
+    <div style="overflow-x: auto;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+          <tr style="background: rgba(255,255,255,0.03); color: var(--text-muted); text-align: left; border-bottom: 1px solid var(--border-subtle);">
+            <th style="padding: 0.75rem;">Scan ID</th>
+            <th style="padding: 0.75rem;">Filename</th>
+            <th style="padding: 0.75rem;">Kind</th>
+            <th style="padding: 0.75rem;">Size</th>
+            <th style="padding: 0.75rem;">Status</th>
+            <th style="padding: 0.75rem;">Exposure Score</th>
+            <th style="padding: 0.75rem;">Findings</th>
+            <th style="padding: 0.75rem; text-align: right;">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for scan in scans %}
+            <tr style="border-bottom: 1px solid var(--border-subtle);">
+              <td style="padding: 0.75rem; font-family: var(--font-mono); color: var(--accent-cyan);">{{ scan.scan_id }}</td>
+              <td style="padding: 0.75rem;"><strong>{{ scan.original_filename }}</strong></td>
+              <td style="padding: 0.75rem; text-transform: uppercase; font-size: 0.75rem;">{{ scan.kind }}</td>
+              <td style="padding: 0.75rem;">{{ (scan.size / 1024)|round(1) }} KB</td>
+              <td style="padding: 0.75rem;">
+                {% if scan.verification_status == 'detected' %}
+                  <span class="badge" style="background: var(--status-danger-bg); color: var(--status-danger); border: 1px solid rgba(239, 68, 68, 0.2);">Compromised</span>
+                {% elif scan.verification_status == 'not_detected' %}
+                  <span class="badge" style="background: var(--status-clean-bg); color: var(--status-clean); border: 1px solid rgba(16, 185, 129, 0.2);">Clean</span>
+                {% else %}
+                  <span class="badge" style="background: var(--status-warn-bg); color: var(--status-warn); border: 1px solid rgba(245, 158, 11, 0.2);">Inconclusive</span>
+                {% endif %}
+              </td>
+              <td style="padding: 0.75rem; font-weight: 700; font-family: var(--font-mono);">
+                {% if scan.score is not none %}{{ scan.score }}{% else %}N/A{% endif %}
+              </td>
+              <td style="padding: 0.75rem; font-family: var(--font-mono);">{{ scan.finding_count }}</td>
+              <td style="padding: 0.75rem; text-align: right;">
+                <div style="display: flex; gap: 0.4rem; justify-content: flex-end; align-items: center;">
+                  <a href="{{ url_for('view_historical_scan', scan_id=scan.scan_id) }}" class="history-btn">Open Audit</a>
+                  <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='html') }}" target="_blank" class="history-btn">HTML</a>
+                  <a href="{{ url_for('api_v1_get_report', scan_id=scan.scan_id, format='json') }}" target="_blank" class="history-btn">JSON</a>
+                  <form action="{{ url_for('delete_historical_scan', scan_id=scan.scan_id) }}" method="POST" style="display: inline-block; margin: 0;" onsubmit="return confirm('Are you sure you want to delete this scan record?');">
+                    <button type="submit" class="history-btn delete" style="line-height: inherit;">Delete</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div style="text-align: center; padding: 3rem; color: var(--text-muted);">
+      No local scan history found. Run your first inspection via single audit or batch scanner.
+    </div>
+  {% endif %}
+</div>
+{% endblock %}

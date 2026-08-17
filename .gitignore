@@ -6,12 +6,16 @@
 !/.github/**
 !/docs/
 !/docs/**
+!/provenance/
+!/provenance/**
 !/service/
 !/service/**
 !/skills/traceclean/
 !/skills/traceclean/**
 !/tests/
 !/tests/**
+!/web/
+!/web/**
 !/.dockerignore
 !/.env.example
 !/.gitignore
@@ -28,6 +32,8 @@
 
 # Exceptions even inside allowed trees
 .env
+contenttrace.db
+contenttrace.db-journal
 **/__pycache__/
 *.pyc
 .venv/

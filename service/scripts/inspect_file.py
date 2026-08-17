@@ -7,7 +7,12 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SCRIPTS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = SCRIPTS_DIR.parent.parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from common import (  # noqa: E402
     MAX_INPUT_BYTES,
@@ -39,6 +44,11 @@ def main() -> int:
         action="store_true",
         help="Scan as text even when the bytes look like a binary container",
     )
+    p.add_argument(
+        "--score",
+        action="store_true",
+        help="Calculate and display the Provenance Exposure Score (0.0 to 100.0)",
+    )
     args = p.parse_args()
 
     if not args.path.is_file():
@@ -51,6 +61,26 @@ def main() -> int:
 
     kind = args.force_type if args.force_type != "auto" else classify(args.path)
     file_label = str(args.path.resolve())
+
+    if args.score:
+        from engine import inspect_bytes
+        data_bytes = args.path.read_bytes()
+        inspect_res = inspect_bytes(data_bytes, str(args.path))
+        if args.json:
+            emit_json({"path": file_label, **inspect_res})
+        else:
+            s_val = inspect_res["score"]["score"]
+            s_str = f"{s_val:.1f}" if s_val is not None else "N/A (Inconclusive)"
+            print(f"File: {file_label}")
+            print(f"Kind: {inspect_res['kind']}")
+            print(f"Provenance Exposure Score: {s_str}")
+            print(f"Status: {inspect_res['verification_status']}")
+            print(f"Derivation: {inspect_res['score']['derivation']}")
+            if inspect_res["normalized_findings"]:
+                print("Findings:")
+                for f in inspect_res["normalized_findings"]:
+                    print(f"  - [{f['severity'].upper()}] {f['signal']} ({f['location']})")
+        return 0 if inspect_res["verification_status"] == "not_detected" else 1
 
     if kind == "text":
         text = read_text_input(

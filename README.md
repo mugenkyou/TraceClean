@@ -27,7 +27,30 @@ Vendors / ecosystems (class-level): **Claude**, **Gemini / SynthID-Text**, **Ope
 
 Skill path: [`skills/traceclean/`](skills/traceclean/)  
 Service path: [`service/`](service/)  
+Web UI path: [`web/`](web/) &mdash; see [`docs/web-app.md`](docs/web-app.md)  
 (migration: formerly `remove-claude-marks`; slash alias `/remove-claude-marks` still documented)
+
+## Phase 2 — Provenance Intelligence
+
+TraceClean Phase 2 introduces a unified forensic intelligence layer on top of the detection engine:
+
+- **Unified Finding Schema (v1.0)**: Normalizes raw findings across text Unicode parsers, stylometry, EXIF/XMP scanners, and C2PA manifests. See [`docs/finding-schema.md`](docs/finding-schema.md).
+- **Provenance Exposure Score (0.0 to 100.0)**: A transparent, deterministic aggregate measuring metadata exposure. **Explicitly NOT an AI-generation probability estimator.** See [`docs/scoring.md`](docs/scoring.md).
+- **REST API v1**: Versioned API endpoints (`POST /api/v1/scan`, `GET /api/v1/scan/{id}`, `GET /api/v1/scan/{id}/report`) for single and batch file inspection.
+- **Provenance Explorer UI**: Interactive score gauge, category filters, and evidence inspector at `http://127.0.0.1:5000`.
+- **Multi-File Batch Scanner & ZIP Export**: Batch inspect multiple files at `/batch` and export clean ZIP archives.
+- **Local SQLite Scan History**: Non-byte scan metadata log (`contenttrace.db`) at `/history`.
+
+## Web Application (Browser UI)
+
+TraceClean ships a local browser application for drag-and-drop file inspection and cleaning.
+
+```bash
+make serve-web
+# Starts Flask Web App at http://127.0.0.1:5000
+```
+
+Upload any supported document or image (`.png`, `.jpg`, `.webp`, `.svg`, `.pdf`, `.docx`, `.odt`, `.html`, `.md`, `.txt`) to inspect provenance signals and download the cleaned artifact. See [`docs/web-app.md`](docs/web-app.md) for architecture and session details.
 
 ## Install (agent skill)
 
