@@ -28,6 +28,7 @@
 !/pytest.ini
 !/README.md
 !/requirements-dev.txt
+!/requirements.txt
 !/SECURITY.md
 
 # Exceptions even inside allowed trees

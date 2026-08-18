@@ -34,7 +34,7 @@
       </a>
       <div class="nav-links">
         <span class="privacy-badge">100% Local In-Process</span>
-        <a href="{{ url_for('index') }}" class="nav-link {% if request.path == '/' or request.path.startswith('/session') %}active{% endif %}">Single Audit</a>
+        <a href="{{ url_for('index') }}" class="nav-link {% if request.path == '/' or request.path.startswith('/session') %}active{% endif %}">Forensic Scan</a>
         <a href="{{ url_for('batch_page') }}" class="nav-link {% if request.path == '/batch' %}active{% endif %}">Batch Scanner</a>
         <a href="{{ url_for('history_page') }}" class="nav-link {% if request.path == '/history' %}active{% endif %}">Scan History</a>
         <a href="{{ url_for('lab_index') }}" class="nav-link {% if request.path.startswith('/lab') %}active{% endif %}" style="display: inline-flex; align-items: center; gap: 0.25rem;">

@@ -52,7 +52,7 @@ def capabilities() -> dict[str, Any]:
             "qpdf": which("qpdf") is not None,
         },
         "pixel_backends": {
-            "ctrlregen": bool(os.environ.get("NOAI_WATERMARK_DIR")),
+            "ctrlregen": bool(os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR")),
             "diffusion": bool(os.environ.get("MARKDIFFUSION_DIR")),
         },
         "scorers": {

@@ -16,7 +16,7 @@
   existe se cae al torch por defecto en vez de abortar.
 
 .PARAMETER Dir
-  Directorio del checkout (por defecto: $env:NOAI_WATERMARK_DIR o ~\noai-watermark)
+  Directorio del checkout (por defecto: $env:CTRLREGEN_DIR o $env:NOAI_WATERMARK_DIR o ~\noai-watermark)
 
 .PARAMETER Ref
   Commit a usar (por defecto: el SHA fijado; no apuntes a una rama movil)
@@ -41,7 +41,8 @@ function Invoke-Checked {
 }
 
 if (-not $Dir) {
-    if ($env:NOAI_WATERMARK_DIR) { $Dir = $env:NOAI_WATERMARK_DIR }
+    if ($env:CTRLREGEN_DIR) { $Dir = $env:CTRLREGEN_DIR }
+    elseif ($env:NOAI_WATERMARK_DIR) { $Dir = $env:NOAI_WATERMARK_DIR }
     else { $Dir = Join-Path $HOME 'noai-watermark' }
 }
 $parent = Split-Path -Parent $Dir
@@ -134,5 +135,5 @@ Invoke-Checked 'pip install requirements' { & $venvPython -m pip install -r (Joi
 Write-Host ''
 Write-Host 'Listo. Para quitar una marca:'
 Write-Host ''
-Write-Host "  `$env:NOAI_WATERMARK_DIR = '$Dir'"
+Write-Host "  `$env:CTRLREGEN_DIR = '$Dir'"
 Write-Host "  & '$venvPython' '$ScriptDir\clean_ctrlregen.py' IMAGEN -o SALIDA"

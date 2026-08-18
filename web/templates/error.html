@@ -3,24 +3,63 @@
 {% block title %}Error — TraceClean{% endblock %}
 
 {% block content %}
-<div class="result-card" style="border-color: var(--status-danger); background: var(--bg-surface); border-radius: var(--radius-md);">
-  <div class="result-icon" style="background: var(--status-danger-bg); color: var(--status-danger); border-color: rgba(217, 108, 98, 0.2);">
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <circle cx="12" cy="12" r="10"/>
-      <line x1="12" y1="8" x2="12" y2="12"/>
-      <line x1="12" y1="16" x2="12.01" y2="16"/>
-    </svg>
+<div class="result-card" style="border-color: var(--status-danger); background: var(--bg-surface); border-radius: var(--radius-md); max-width: 800px; margin: 0 auto; text-align: left; padding: 2rem;">
+  <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+    <div class="result-icon" style="background: var(--status-danger-bg); color: var(--status-danger); border-color: rgba(217, 108, 98, 0.2); flex-shrink: 0; margin: 0;">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    </div>
+    <div>
+      <h1 class="result-title" style="color: var(--status-danger); margin: 0; font-size: 1.75rem;">Processing Error</h1>
+      <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">TraceClean Forensic Engine Diagnostic</div>
+    </div>
   </div>
 
-  <h1 class="result-title" style="color: var(--status-danger);">Processing Error</h1>
-  <p class="result-desc">
-    {{ error|default('An unexpected error occurred while processing the file.') }}
-  </p>
+  <div style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 1.5rem; margin-bottom: 1.5rem;">
+    <h3 style="font-size: 1.1rem; color: #fff; margin-bottom: 0.5rem;">What Failed</h3>
+    <p style="color: var(--text-main); font-family: var(--font-mono); background: rgba(0, 0, 0, 0.2); padding: 0.75rem; border-radius: var(--radius-sm); border-left: 3px solid var(--status-danger); font-size: 0.9rem; margin: 0; word-break: break-all;">
+      {{ error|default('An unexpected error occurred while processing.') }}
+    </p>
+  </div>
 
-  <div style="margin-top: 2rem;">
-    <a href="{{ url_for('index') }}" class="btn-primary">
-      ← Return to File Upload
+  <div style="margin-bottom: 1.5rem;">
+    <h3 style="font-size: 1.1rem; color: #fff; margin-bottom: 0.5rem;">What You Can Do Next</h3>
+    <ul style="color: var(--text-muted); padding-left: 1.25rem; font-size: 0.9rem; line-height: 1.6;">
+      {% if suggestion %}
+        <li>{{ suggestion }}</li>
+      {% else %}
+        <li>Verify the file is a supported format (PNG, JPEG, WebP, SVG, PDF, DOCX, ODT, HTML, Markdown).</li>
+        <li>Ensure the file is not empty or corrupted.</li>
+        <li>For ML Watermark Lab errors, make sure the required external harness is cloned and environment variables are correctly configured.</li>
+      {% endif %}
+    </ul>
+  </div>
+
+  {% if traceback %}
+  <div style="margin-bottom: 2rem;">
+    <details style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); padding: 0.75rem;">
+      <summary style="cursor: pointer; font-size: 0.85rem; color: var(--accent-cyan); font-weight: 600; outline: none; user-select: none;">
+        View Expandable Technical Diagnostics (Traceback)
+      </summary>
+      <pre style="margin-top: 0.75rem; font-family: var(--font-mono); font-size: 0.75rem; color: #ff9d9d; white-space: pre-wrap; overflow-x: auto; max-height: 250px; background: #000; padding: 0.75rem; border-radius: 2px;">{{ traceback }}</pre>
+    </details>
+  </div>
+  {% endif %}
+
+  <div style="display: flex; gap: 1rem; align-items: center;">
+    <a href="{{ url_for('index') }}" class="btn" style="background: var(--accent-cyan); color: #000; text-decoration: none; font-weight: 600; padding: 0.5rem 1.25rem; border-radius: var(--radius-sm);">
+      ← Return to Scan
     </a>
+    {% if retry_url %}
+    <form action="{{ retry_url }}" method="POST" style="margin: 0;">
+      <button type="submit" class="btn" style="background: transparent; color: var(--text-main); border: 1px solid var(--border-subtle); font-weight: 600; padding: 0.5rem 1.25rem; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition);">
+        Retry Operation
+      </button>
+    </form>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

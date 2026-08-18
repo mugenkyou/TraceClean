@@ -648,11 +648,11 @@ def run_ctrlregen_clean(
     successful run is ``{"available": True, ...}``.
     """
     if upstream_dir is None:
-        upstream_dir = os.environ.get("NOAI_WATERMARK_DIR")
+        upstream_dir = os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR")
     if not upstream_dir:
         return {
             "available": False,
-            "error": "CtrlRegen not configured (set NOAI_WATERMARK_DIR or pass --ctrlregen-dir)",
+            "error": "CtrlRegen not configured (set CTRLREGEN_DIR or pass --ctrlregen-dir)",
         }
 
     upstream = Path(upstream_dir).expanduser().resolve()

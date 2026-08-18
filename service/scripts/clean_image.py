@@ -47,7 +47,7 @@ def main() -> int:
         "--ctrlregen-dir",
         type=str,
         default=None,
-        help="noai-watermark checkout root (default: $NOAI_WATERMARK_DIR)",
+        help="CtrlRegen checkout root (default: $CTRLREGEN_DIR)",
     )
     p.add_argument(
         "--ctrlregen-strength",

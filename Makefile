@@ -38,8 +38,8 @@ docker-synthid-help:
 	docker run --rm traceclean-synthid-scorer --help
 
 smoke-ctrlregen:
-	@if [ -z "$(NOAI_WATERMARK_DIR)" ]; then \
-	  echo "smoke-ctrlregen skipped (set NOAI_WATERMARK_DIR)"; \
+	@if [ -z "$(CTRLREGEN_DIR)" -a -z "$(NOAI_WATERMARK_DIR)" ]; then \
+	  echo "smoke-ctrlregen skipped (set CTRLREGEN_DIR)"; \
 	else \
 	  $(PYTHON) $(SCRIPTS)/clean_ctrlregen.py --help >/dev/null && echo "clean_ctrlregen adapter present"; \
 	fi

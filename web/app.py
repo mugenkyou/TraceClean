@@ -928,7 +928,7 @@ def lab_health() -> Response:
     env_vars = {
         "MARKLLM_DIR": os.environ.get("MARKLLM_DIR"),
         "REVERSE_SYNTHID_DIR": os.environ.get("REVERSE_SYNTHID_DIR"),
-        "NOAI_WATERMARK_DIR": os.environ.get("NOAI_WATERMARK_DIR"),
+        "CTRLREGEN_DIR": os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR"),
     }
     checks["environment"] = {
         var: {
@@ -982,17 +982,31 @@ def file_too_large(e: Any) -> tuple[str, int]:
     return render_template(
         "error.html",
         error=f"Uploaded file is too large. Maximum supported size is {MAX_INPUT_BYTES // (1024 * 1024)} MB.",
+        suggestion="Split the input file into smaller pieces or compress images to reduce file size.",
     ), 413
 
 
 @app.errorhandler(404)
 def not_found(e: Any) -> tuple[str, int]:
-    return render_template("error.html", error="Page or resource not found."), 404
+    return render_template(
+        "error.html",
+        error="Page or resource not found.",
+        suggestion="Ensure the URL is spelled correctly or return to the main scan dashboard.",
+    ), 404
 
 
 @app.errorhandler(500)
 def internal_error(e: Any) -> tuple[str, int]:
-    return render_template("error.html", error="An internal server error occurred."), 500
+    import traceback
+    tb = traceback.format_exc()
+    original_err = getattr(e, "original_exception", None) or e
+    error_msg = f"Internal Server Error: {original_err}" if original_err and str(original_err) else "An internal server error occurred."
+    return render_template(
+        "error.html",
+        error=error_msg,
+        suggestion="Verify that the input payload is valid. If it is an optional ML harness operation, ensure it is installed and configured.",
+        traceback=tb if app.debug or app.testing else None,
+    ), 500
 
 
 if __name__ == "__main__":

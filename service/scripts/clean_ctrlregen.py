@@ -81,7 +81,7 @@ def main() -> int:
         "--upstream-dir",
         type=Path,
         default=None,
-        help="noai-watermark checkout root (default: $NOAI_WATERMARK_DIR)",
+        help="CtrlRegen checkout root (default: $CTRLREGEN_DIR)",
     )
     p.add_argument(
         "--strength",
@@ -115,11 +115,11 @@ def main() -> int:
         print(f"steps must be >= 1: {args.steps}", file=sys.stderr)
         return 2
 
-    raw_upstream = args.upstream_dir or os.environ.get("NOAI_WATERMARK_DIR")
+    raw_upstream = args.upstream_dir or os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR")
     upstream = resolve_upstream(str(raw_upstream) if raw_upstream else None)
     if upstream is None:
         print(
-            "CtrlRegen not configured: set NOAI_WATERMARK_DIR or pass --upstream-dir",
+            "CtrlRegen not configured: set CTRLREGEN_DIR or pass --upstream-dir",
             file=sys.stderr,
         )
         return 3

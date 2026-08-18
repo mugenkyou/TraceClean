@@ -10,7 +10,7 @@ set -euo pipefail
 # only the dependencies needed by clean_ctrlregen.py.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_DIR="${NOAI_WATERMARK_DIR:-$HOME/noai-watermark}"
+DEFAULT_DIR="${CTRLREGEN_DIR:-${NOAI_WATERMARK_DIR:-$HOME/noai-watermark}}"
 DIR=""
 # Pinned upstream commit (2026-08-13). Do not point at a moving branch.
 REF="b642ae45d20eded52c96d570985eb4e3e427aac8"
@@ -24,7 +24,7 @@ Clones (if needed) mertizci/noai-watermark, creates a venv, and installs the
 Python dependencies required by clean_ctrlregen.py (including torch).
 
 Options:
-  --dir PATH     checkout directory (default: $NOAI_WATERMARK_DIR or ~/noai-watermark)
+  --dir PATH     checkout directory (default: $CTRLREGEN_DIR or ~/noai-watermark)
   --ref REF      git ref to checkout (default: pinned commit SHA)
   --python PY    Python interpreter used to create the venv (default: python3)
 EOF
@@ -112,6 +112,6 @@ cat <<EOF
 
 Done. Remove a watermark with:
 
-  export NOAI_WATERMARK_DIR="$DIR"
+  export CTRLREGEN_DIR="$DIR"
   "$DIR/.venv/bin/python" "$SCRIPT_DIR/clean_ctrlregen.py" IMAGE -o OUT
 EOF

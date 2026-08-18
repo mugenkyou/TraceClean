@@ -146,7 +146,7 @@ def _build_subprocess_env() -> dict[str, str]:
     """
     env = os.environ.copy()
     # Normalise Windows path separators for robustness
-    for var in ("MARKLLM_DIR", "REVERSE_SYNTHID_DIR", "NOAI_WATERMARK_DIR", "MARKDIFFUSION_DIR"):
+    for var in ("MARKLLM_DIR", "REVERSE_SYNTHID_DIR", "CTRLREGEN_DIR", "NOAI_WATERMARK_DIR", "MARKDIFFUSION_DIR"):
         val = os.environ.get(var)
         if val:
             env[var] = str(Path(val).expanduser().resolve())
@@ -325,7 +325,7 @@ def run_pipeline(run_id: str, experiment_id: str, config: dict[str, Any]) -> Non
         "harness_versions": {
             "markllm": os.environ.get("MARKLLM_DIR", "unconfigured"),
             "synthid": os.environ.get("REVERSE_SYNTHID_DIR", "unconfigured"),
-            "ctrlregen": os.environ.get("NOAI_WATERMARK_DIR", "unconfigured"),
+            "ctrlregen": os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR", "unconfigured"),
         },
         "python_version": sys.version,
         "platform": sys.platform,
@@ -586,7 +586,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any], run_id: str 
     
     markdiff_dir = os.environ.get("MARKDIFFUSION_DIR")
     synthid_dir = os.environ.get("REVERSE_SYNTHID_DIR")
-    ctrlregen_dir = os.environ.get("NOAI_WATERMARK_DIR")
+    ctrlregen_dir = os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR")
 
     # Step 1: Image Watermarking
     # If the input type is a prompt, we must use MarkDiffusion to generate the image
@@ -686,7 +686,7 @@ def _run_image_pipeline(input_bytes: bytes, config: dict[str, Any], run_id: str 
     try:
         if att_sec["method"] == "ctrlregen":
             if not ctrlregen_dir:
-                raise RuntimeError("Watermark Lab Error: NOAI_WATERMARK_DIR is not configured for CtrlRegen attack.")
+                raise RuntimeError("Watermark Lab Error: CTRLREGEN_DIR is not configured for CtrlRegen attack.")
             
             py_exe_cr = _get_python_executable(ctrlregen_dir)
             clean_script = str(SCRIPTS_DIR / "clean_ctrlregen.py")
@@ -832,7 +832,7 @@ def get_harness_status() -> dict[str, Any]:
     """Detect the presence, version, and dependencies of external watermarking harnesses."""
     markllm_dir = os.environ.get("MARKLLM_DIR")
     synthid_dir = os.environ.get("REVERSE_SYNTHID_DIR")
-    ctrlregen_dir = os.environ.get("NOAI_WATERMARK_DIR")
+    ctrlregen_dir = os.environ.get("CTRLREGEN_DIR") or os.environ.get("NOAI_WATERMARK_DIR")
     
     status = {
         "markllm": {
@@ -862,7 +862,7 @@ def get_harness_status() -> dict[str, Any]:
         "ctrlregen": {
             "name": "CtrlRegen",
             "purpose": "Image watermark purification/removal",
-            "env_var": "NOAI_WATERMARK_DIR",
+            "env_var": "CTRLREGEN_DIR",
             "path": ctrlregen_dir or "Not configured",
             "repo_installed": False,
             "deps_installed": False,

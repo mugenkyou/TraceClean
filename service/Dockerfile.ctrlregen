@@ -57,7 +57,8 @@ RUN python3 -m pip install --no-cache-dir "pip==26.2.1" \
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin remover
 USER remover
 
-ENV NOAI_WATERMARK_DIR=/opt/noai-watermark \
+ENV CTRLREGEN_DIR=/opt/noai-watermark \
+    NOAI_WATERMARK_DIR=/opt/noai-watermark \
     HOME=/home/remover \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
