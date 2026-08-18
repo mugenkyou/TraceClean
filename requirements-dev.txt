@@ -1,3 +1,4 @@
+-r requirements.txt
 # Dev/test dependencies for CI — exact pins (no drift).
 # Dependabot can bump these; keep them in sync with the local .venv.
 pytest==9.1.1

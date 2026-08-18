@@ -67,6 +67,7 @@ def _make_fake_upstream(tmp_path: Path, *, fail_run: bool = False) -> Path:
 
 def _run_adapter(*args: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
+    env.pop("CTRLREGEN_DIR", None)
     env.pop("NOAI_WATERMARK_DIR", None)
     return subprocess.run(
         [sys.executable, str(CLEAN_SCRIPT), *args],
@@ -93,7 +94,7 @@ def test_cli_unavailable_without_upstream(tmp_path: Path):
     dummy.write_bytes(b"not really an image")
     r = _run_adapter(str(dummy))
     assert r.returncode == 3
-    assert "NOAI_WATERMARK_DIR" in (r.stderr or "")
+    assert "CTRLREGEN_DIR" in (r.stderr or "")
 
 
 def test_cli_bad_input_missing_file(tmp_path: Path):
@@ -165,10 +166,11 @@ def test_cli_refuses_symlink_output(tmp_path: Path):
 def test_run_ctrlregen_clean_unconfigured_returns_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ):
+    monkeypatch.delenv("CTRLREGEN_DIR", raising=False)
     monkeypatch.delenv("NOAI_WATERMARK_DIR", raising=False)
     result = run_ctrlregen_clean(Path("x.png"), Path("y.png"))
     assert result["available"] is False
-    assert "NOAI_WATERMARK_DIR" in result["error"]
+    assert "CTRLREGEN_DIR" in result["error"]
 
 
 def test_run_ctrlregen_clean_success_parses_json(
@@ -241,6 +243,7 @@ def test_run_ctrlregen_clean_prefers_venv_python(
 
 
 def test_clean_image_ctrlregen_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("CTRLREGEN_DIR", raising=False)
     monkeypatch.delenv("NOAI_WATERMARK_DIR", raising=False)
     monkeypatch.delenv("REVERSE_SYNTHID_DIR", raising=False)
     src = tmp_path / "t.png"
