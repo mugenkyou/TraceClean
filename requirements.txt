@@ -2,5 +2,5 @@
 # Pinned versions are selected to be secure and stable.
 Flask==3.0.3
 PyYAML==6.0.2
-numpy==2.2.3
+numpy==2.5.2
 Pillow==11.3.0
