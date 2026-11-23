@@ -3,4 +3,4 @@
 Flask==3.0.3
 PyYAML==6.0.2
 numpy==2.2.3
-Pillow==11.3.0
+Pillow==13.0.0
